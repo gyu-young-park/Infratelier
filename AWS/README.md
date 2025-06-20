@@ -56,6 +56,45 @@ IAM 계정 생성 후 권한을 부여하여 사용하는 방식보다는 EC2 �
 1. EC2 패이지
 2. 왼쪽 메뉴 바에서 '키 페어'
 3. 키페어 생성
-4. 이름: aws-cli-ec2-key
+4. 이름: 'aws-cli-ec2-key'
 5. 키 생성
 6. chmod 400 ./aws-cli-ec2-key.pem
+
+EC2에 적용할 보안 그룹을 생성하여 SSH만 허용하도록 만들자.
+1. EC2 페이지
+2. 왼쪽 메뉴 바에서 '보안 그룹'
+3. 보안 그룹 생성
+4. 보안 그룹 이름 'aws-cli-ec2-sg'
+5. VPC는 기본값으로 설정
+6. 인바운드 규칙
+    1. 유형: SSH
+    2. 포트: 22
+    3. Source: 내 IP
+7. 아웃 바운드: 기본값 유지
+
+이제 EC2 인스턴스를 생성해보도록 하자.
+1. EC2 페이지
+2. 인스턴스 시작 클릭
+3. 이름 'aws-cli-ec2-bastion'
+4. Amazon Linux 선택
+5. 인스턴스 유형: t3.mirco
+6. 키페어: 'aws-cli-ec2-key'
+7. 네트워크: 기본 VPC
+8. 서브넷: 퍼블릭 서브넷 중 아무거나 선택
+9. 퍼블릭 IP: 자동 할당
+10. IAM 역할: 'AWSCliEC2Role'
+11. 보안 그룹: 'aws-cli-ec2-sg'
+
+이제 EC2 인스턴스가 프로비저닝 되었다면 다음의 명령어로 접속하도록 하자.
+
+```sh
+AWS_CLI_EC2_PUBLIC_IP=""
+ssh -i "aws-cli-ec2-key.pem" ec2-user@$AWS_CLI_EC2_PUBLIC_IP
+
+aws --version
+```
+
+다음으로 EC2 instance에 역할이 잘 붙었는지 확인해보도록 하자.
+```sh
+aws sts get-caller-identity
+```
