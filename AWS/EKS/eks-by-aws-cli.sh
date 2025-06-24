@@ -31,13 +31,14 @@ PUB_SUBNET_ID=$(aws ec2 create-subnet \
   --availability-zone ${REGION}a \
   --output text --query 'Subnet.SubnetId')
 
+echo "[+] Public Subnet: $PUB_SUBNET_ID"
+
 PRI_SUBNET_ID=$(aws ec2 create-subnet \
   --vpc-id $VPC_ID \
   --cidr-block $PRIVATE_SUBNET_CIDR \
   --availability-zone ${REGION}a \
   --output text --query 'Subnet.SubnetId')
 
-echo "[+] Public Subnet: $PUB_SUBNET_ID"
 echo "[+] Private Subnet: $PRI_SUBNET_ID"
 
 # 4. 라우트 테이블 생성 및 연결 (퍼블릭용)
