@@ -103,7 +103,7 @@ aws eks create-cluster \
   --name my-eks-cluster \
   --region $REGION \
   --role-arn $ROLE_ARN \
-  --resources-vpc-config subnetIds=$PUB_SUBNET_ID,$PRI_SUBNET_ID,endpointPublicAccess=true
+  --resources-vpc-config subnetIds=$PRI_SUBNET_ID,endpointPublicAccess=true
 
 echo "[✓] EKS Cluster provisioning started"
 

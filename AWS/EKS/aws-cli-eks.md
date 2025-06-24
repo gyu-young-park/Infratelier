@@ -164,4 +164,35 @@ aws ec2 associate-route-table --subnet-id $PRI_SUBNET_ID --route-table-id $PRI_R
 ```
 `associated`가 나왔다면 성공이다.
 
-# 2. EKS 생성 
+# 2. EKS 생성
+EKS 클러스터를 프로비저닝할 때는 클러스터 제어 플레인(Control Plane) 이 사용할 IAM 역할에 최소한 AmazonEKSClusterPolicy 정책을 포함시켜야 한다. EKS control plane에서는 자동으로 다음과 같은 자원을 제어하기 때문이다. 
+
+1. ENI 생성/삭제 (EC2 네트워크 인터페이스)
+2. 로드밸런서 연동 (Service Type: LoadBalancer)
+3. CloudWatch 로그 전송
+4. 보안 그룹 조회
+
+이 역할이 없다면 제대로 생성되지 않거나, 우리가 원하는 대로 동작하지 않을 수 있다. 
+
+먼저 IAM Role을 만든다음, Role에 `AmazonEKSClusterPolicy` Policy를 연결해준다음, 해당 Role을 eks control plane에 연결하도록 하는 것이다.  
+```sh
+ROLE_NAME="EKSClusterRole"
+ROLE_ARN=$(aws iam create-role \
+  --role-name $ROLE_NAME \
+  --assume-role-policy-document file://<(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "eks.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+) \
+  --output text --query 'Role.Arn')
+
+aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+```
