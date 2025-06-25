@@ -113,6 +113,8 @@ PRI_SUBNET_ID=$(aws ec2 create-subnet \
 
 echo "[+] Private Subnet: $PRI_SUBNET_ID"
 ```
+가용 영역으로 `ap-northeast-2a`을 설정해준 것이다.
+
 `PRI_SUBNET_ID`값이 잘 나왔다면 성공이다.
 
 > 지금은 두 서브넷을 같은 가용 영역에 배포했지만 서로 다른 가용 영역에 배포하는 것이 고가용성을 보장하므로 더 좋은 방식이다.
@@ -164,7 +166,37 @@ aws ec2 associate-route-table --subnet-id $PRI_SUBNET_ID --route-table-id $PRI_R
 ```
 `associated`가 나왔다면 성공이다.
 
+다음으로 두 번째 private subnet을 만들어주되, AZ(가용 영역)을 앞에서 만든 것과 다르게 만들도록 하자. 이렇게 두 개의 private subnet을 만들고 가용 영역을 서로 다르게 만드는 이유는 EKS에서 사용 할 control plane, worker node에 고가용성을 보장하기 위함이다. 
+
+1. public subnet의 경우 ENI에 공인 IP가 붙으므로 AWS CNI 사용 시에 pod에 공인 IP가 붙을 수도 있다. 이는 보안상에 좋지 못하고, IP 자원 낭비가 극심하다.
+2. private subnet을 사용하되 고가용성을 위해서 두 private subnet은 서로 다른 AZ로 배포되어야 한다.
+
+> IP가 뭐 그리 비싼 자원이냐고 생각할 수 있지만, IP는 실제로 매우 비싼 리소스 중 하나이다. on-premise 환경에서는 IP를 아끼기 위해서 NAT, CIDR 등등 각종 네트워크 기술과 가상화 및 오프로딩 방식들을 사용하여 IP를 아끼곤 한다. 
+
+```sh
+PRIVATE_SUBNET_CIDR_2="10.0.3.0/24"
+
+PRI_SUBNET_ID_2=$(aws ec2 create-subnet \
+  --vpc-id $VPC_ID \
+  --cidr-block $PRIVATE_SUBNET_CIDR_2 \
+  --availability-zone ${REGION}c \
+  --output text --query 'Subnet.SubnetId')
+
+echo "[+] Second Private Subnet: $PRI_SUBNET_ID_2"
+```
+앞에서 먼저 만들었던 첫번째 private subnet은 가용 영역이 `ap-northeast-2a`이므로, 두번째 private subnet의 가용 영역은 `ap-northeast-2c`로 설정하게 두었다. 
+
+다음으로 `PRI_SUBNET_ID_2`에도 route table을 설정해주어 public subnet의 NAT Gateway를 타고 트래픽이 외부로 나갈 수 있도록 설정해주도록 하자.
+```sh
+aws ec2 associate-route-table \
+  --subnet-id $PRI_SUBNET_ID_2 \
+  --route-table-id $PRI_RT_ID
+```
+`associated`가 나왔다면 성공이다.
+
 # 2. EKS 생성
+EKS cluster는 AWS에서 엄밀히 말하면 kubernetes의 control plane만 말하는 것이다. 따라서 EKS cluster를 만드는 것은 control plane을 만드는 것이지 worker node를 만드는 것은 아니다. 
+
 EKS 클러스터를 프로비저닝할 때는 클러스터 제어 플레인(Control Plane) 이 사용할 IAM 역할에 최소한 AmazonEKSClusterPolicy 정책을 포함시켜야 한다. EKS control plane에서는 자동으로 다음과 같은 자원을 제어하기 때문이다. 
 
 1. ENI 생성/삭제 (EC2 네트워크 인터페이스)
@@ -175,6 +207,8 @@ EKS 클러스터를 프로비저닝할 때는 클러스터 제어 플레인(Cont
 이 역할이 없다면 제대로 생성되지 않거나, 우리가 원하는 대로 동작하지 않을 수 있다. 
 
 먼저 IAM Role을 만든다음, Role에 `AmazonEKSClusterPolicy` Policy를 연결해준다음, 해당 Role을 eks control plane에 연결하도록 하는 것이다.  
+1. `AmazonEKSClusterPolicy`: control plane가 AWS 리소스를 다룰 수 있게하는 정책이다.  보안 그룹, 서브넷 조회, ENI 생성 등의 기능을 할 수 있도록 권한을 주는 것이다. 
+
 ```sh
 ROLE_NAME="EKSClusterRole"
 ROLE_ARN=$(aws iam create-role \
@@ -196,3 +230,82 @@ EOF
 
 aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
 ```
+
+이제 EKS Cluster를 만들어보도록 하자. EKS Cluster를 만들기 위해서는 기본적으로 다음이 필요하다.
+1. Region
+2. Role arn (control plane에서 AWS 자원을 제어하기 위해서 필요하다)
+3. Private Subnet1, Private Subnet2 
+```sh
+aws eks create-cluster \
+  --name my-eks-cluster \
+  --region $REGION \
+  --role-arn $ROLE_ARN \
+  --resources-vpc-config subnetIds=$PRI_SUBNET_ID,$PRI_SUBNET_ID_2,endpointPublicAccess=true
+
+aws eks wait cluster-active --name my-eks-cluster --region $REGION
+```
+`my-eks-cluster`가 생성될 때까지 기다리게 된다. AWS console로 가서 EKS 클러스터에 가보면 생성 중이라고 나올 것이다. 
+
+`aws eks create-cluster`로 만든 eks cluster는 kubernetes에서 control plane에 속한다. 즉, etcd, api-server, controller, scheduler를 관리하는 control plane node만 만든 것이고, pod들이 실제로 배포될 worker node를 만든 것이 아니다.
+
+왜 EKS는 worker node를 위한 node group을 따로 만드냐면, node의 역할을 하는 것이 EC2 인스턴스들이기 때문이다. node 역할을 하는 EC2 instance의 type(`t3.medium`, `g4dn.xlarge`), OS 등을 달리 만들어 배포할 수도 있고, 용도에 따라 다르게 배포시킬 수도 있기 때문이다. 가령 GPU 용 node를 따로 관리하도록 하는 것이다. 이렇게 node group을 따로 두어 eks 프로비저닝을 할 때 사용자가 원하는 node들을 선택해서 만들어 kubernetes에 사용할 수 있는 것이다.
+
+pod를 배포할 때는 node selector, affinity를 사용해서 특정 node에 배포할 수 있도록 하는 것이다.
+
+EKS에서 pod가 배포되는 worker node는 node group으로 실제로는 EC2 instance에 불과하다. EC2 instance이기 때문에 AWS 리소스들을 제어하고 사용하기 위해서 ARN을 설정해주어야 한다. node group에 사용되는 ARN에 필요한 필수 policy들은 다음과 같다.
+
+1. `AmazonEKSWorkerNodePolicy`: worker node가 cluster의 control plane와 통신하기 위해서 필요하다. cluster 정보를 조회해서 자신(node)를 등록시키기 위해 필요한 것이다.
+2. `AmazonEKS_CNI_Policy`: VPC CNI plugin을 통해 pod를 생성할 시에 pod에 ENI가 붙게된다. 즉, pod가 배포된 node에 pod에 대한 ENI가 직접 붙게되는 것이다. 이를 위해서 EC2 network에 대한 권한들이 필요한 것이다.
+3. `AmazonEC2ContainerRegistryReadOnly`: EC2 instance가 ECR에서 컨테이너 이미지를 pull할 수 있게 해준다. 
+
+이제 node group을 위한 ARN을 만들고, 위의 3개의 policy를 연결시키도록 하자.
+```sh
+NODE_ROLE_NAME="EKSNodeRole"
+NODE_ROLE_ARN=$(aws iam create-role \
+  --role-name $NODE_ROLE_NAME \
+  --assume-role-policy-document file://<(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ec2.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+) \
+  --output text --query 'Role.Arn')
+
+aws iam attach-role-policy --role-name $NODE_ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+aws iam attach-role-policy --role-name $NODE_ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+aws iam attach-role-policy --role-name $NODE_ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+```
+
+다음으로 AWS node group을 만들고 eks cluster(control plane)를 연결시키도록 하자. nodegroup 생성에 필요한 정보들은 다음과 같다.
+1. EKS cluster(control plane) 이름(`my-eks-cluster`)
+2. Nodegroup 이름
+3. Private subnet 2개 이상
+4. Node ARN
+5. scaling config: 최대, 최소, node 유지 수
+6. disk size
+7. EC2 instance type
+
+추가로 어떤 OS를 사용할 지 `--ami-type`도 설정할 수 있지만, 아무것도 넣지 않으면 자동으로 설정된다. 참고로 kuberntes 1.33 기준으로 `AL2_x86_64`은 이제 deprecated되어 못 사용한다. 
+```sh
+echo "[+] Creating managed node group..."
+aws eks create-nodegroup \
+  --cluster-name my-eks-cluster \
+  --region $REGION \
+  --nodegroup-name my-node-group \
+  --subnets $PRI_SUBNET_ID $PRI_SUBNET_ID2 \
+  --node-role $NODE_ROLE_ARN \
+  --scaling-config minSize=1,maxSize=3,desiredSize=1 \
+  --disk-size 20 \
+  --instance-types t3.medium \
+
+# wait for node group to be active
+aws eks wait nodegroup-active --cluster-name my-eks-cluster --nodegroup-name my-node-group --region $REGION
+```
+잠시만 기다리면 nodegroup이 배포될 것이다.
