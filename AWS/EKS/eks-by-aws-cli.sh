@@ -160,7 +160,108 @@ aws eks create-nodegroup \
 # wait for node group to be active
 aws eks wait nodegroup-active --cluster-name my-eks-cluster --nodegroup-name my-node-group --region $REGION
 
-# 9. 테스트용 nginx Pod 배포
+# 9. bastion
+BASTION_ROLE_NAME="BastionAccessRole"
+BASTION_ROLE_ARN=$(aws iam create-role \
+  --role-name $BASTION_ROLE_NAME \
+  --assume-role-policy-document file://<(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ec2.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+) \
+  --output text --query 'Role.Arn')
+
+echo "[+] Bastion IAM Role: $BASTION_ROLE_ARN"
+
+aws iam attach-role-policy \
+  --role-name $BASTION_ROLE_NAME \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+aws iam create-instance-profile --instance-profile-name BastionInstanceProfile
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name BastionInstanceProfile \
+  --role-name $BASTION_ROLE_NAME
+
+BASTION_SG_ID=$(aws ec2 create-security-group \
+  --group-name bastion-sg \
+  --description "Allow SSH and access to EKS VPC" \
+  --vpc-id $VPC_ID \
+  --region ap-northeast-2 \
+  --output text --query 'GroupId')
+
+# SSH 허용 (본인 IP로 제한)
+MY_IP=$(curl -s http://checkip.amazonaws.com)
+aws ec2 authorize-security-group-ingress \
+  --group-id $BASTION_SG_ID \
+  --protocol tcp --port 22 --cidr ${MY_IP}/32 \
+  --region ap-northeast-2
+
+# EKS 내부 통신 허용 (VPC 내부로)
+aws ec2 authorize-security-group-ingress \
+  --group-id $BASTION_SG_ID \
+  --protocol tcp --port 443 --cidr 10.0.0.0/16 \
+  --region ap-northeast-2
+
+echo "[+] Bastion SG created: $BASTION_SG_ID"
+
+aws ec2 create-key-pair \
+  --key-name bastion-key \
+  --query 'KeyMaterial' \
+  --region ap-northeast-2 \
+  --output text > bastion-key.pem
+
+chmod 400 bastion-key.pem
+
+BASTION_INSTANCE_ID=$(aws ec2 run-instances \
+  --image-id ami-0308297ba71025b4d \
+  --instance-type t3.micro \
+  --key-name bastion-key \
+  --security-group-ids $BASTION_SG_ID \
+  --subnet-id $PUB_SUBNET_ID \
+  --associate-public-ip-address \
+  --iam-instance-profile Name=BastionInstanceProfile \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bastion}]' \
+  --region ap-northeast-2 \
+  --query 'Instances[0].InstanceId' --output text)
+
+echo "[+] Bastion EC2 ID: $BASTION_INSTANCE_ID"
+
+# 퍼블릭 IP 얻기
+BASTION_PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids $BASTION_INSTANCE_ID \
+  --region ap-northeast-2 \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+echo "[+] SSH to: ssh -i bastion-key.pem ec2-user@$BASTION_PUBLIC_IP"
+
+ssh -i bastion-key.pem ec2-user@${BASTION_PUBLIC_IP}
+
+# AWS CLI v2
+sudo yum install unzip
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+curl -LO "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+# 확인
+kubectl version --client
+
+# 10. 테스트용 nginx Pod 배포
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
@@ -183,3 +284,25 @@ echo "Node Group: my-node-group"
 echo "EIP/NAT: $NAT_GW_ID ($EIP_ALLOC_ID)"
 echo "Role ARN: $ROLE_ARN"
 echo "Node Role ARN: $NODE_ROLE_ARN"
+
+
+aws eks delete-nodegroup \
+  --cluster-name my-eks-cluster \
+  --nodegroup-name my-node-group \
+  --region ap-northeast-2
+
+# Node Group 삭제 완료까지 대기
+aws eks wait nodegroup-deleted \
+  --cluster-name my-eks-cluster \
+  --nodegroup-name my-node-group \
+  --region ap-northeast-2
+
+
+aws eks delete-cluster \
+--name my-eks-cluster \
+--region ap-northeast-2
+
+# 클러스터 삭제 완료까지 대기
+aws eks wait cluster-deleted \
+  --name my-eks-cluster \
+  --region ap-northeast-2

@@ -250,6 +250,8 @@ aws eks wait cluster-active --name my-eks-cluster --region $REGION
 
 왜 EKS는 worker node를 위한 node group을 따로 만드냐면, node의 역할을 하는 것이 EC2 인스턴스들이기 때문이다. node 역할을 하는 EC2 instance의 type(`t3.medium`, `g4dn.xlarge`), OS 등을 달리 만들어 배포할 수도 있고, 용도에 따라 다르게 배포시킬 수도 있기 때문이다. 가령 GPU 용 node를 따로 관리하도록 하는 것이다. 이렇게 node group을 따로 두어 eks 프로비저닝을 할 때 사용자가 원하는 node들을 선택해서 만들어 kubernetes에 사용할 수 있는 것이다.
 
+> EKS를 배포하는 방법 중에 nodegroup을 통해서 worker node를 만드는 방법을 '관리형 방식'이라고 한다. '관리형 방식'은 반복되는 기능들을 AWS에서 자동으로 해주는 기능이지만 node에 직접 사용자가 접근하지 못하게 한다. 이러한 방식은 사실 실제 배포 상에서 디버깅의 어려움이 있기 때문에 별로 좋은 방법이 아니다. 실제 배포에서는 관리형 방식이 아니라 EC2 instance를 직접 올리고 연결하는 방식을 사용한다. 여기서는 먼저 관리형 방식인 managed node로 배포해보도록 하자. 
+
 pod를 배포할 때는 node selector, affinity를 사용해서 특정 node에 배포할 수 있도록 하는 것이다.
 
 EKS에서 pod가 배포되는 worker node는 node group으로 실제로는 EC2 instance에 불과하다. EC2 instance이기 때문에 AWS 리소스들을 제어하고 사용하기 위해서 ARN을 설정해주어야 한다. node group에 사용되는 ARN에 필요한 필수 policy들은 다음과 같다.
@@ -308,4 +310,176 @@ aws eks create-nodegroup \
 # wait for node group to be active
 aws eks wait nodegroup-active --cluster-name my-eks-cluster --nodegroup-name my-node-group --region $REGION
 ```
-잠시만 기다리면 nodegroup이 배포될 것이다.
+잠시만 기다리면 nodegroup이 배포되고 AWS console에서 확인할 수 있다.
+
+# 3. Bastion EC2 instance 설정
+private subnet에 있는 EKS 용 instance에 직접 들어가서 `kubectl`을 사용하기 보다는 접근용 bastion host를 만드는 것이 일반적인 방법이다. 이는 보안적인 측면에서 장점이 있고 node에 대한 제한된 접근을 통해 최소 권한으로만 부여하여 시스템을 동작할 수 있다는 장점이 있다.
+
+bastion host를 통해서 기본적인 `kubectl` 명령들을 실행할 수 있도록 하면 된다.
+
+bastion host도 EC2 instance이기 때문에 EKS 정보를 읽기 위해서는 role을 부여해야한다.
+
+이미 만들어진 policy 중에서는 딱히 적절한 것이 없으므로 하나 만들어주어야 한다. `eks:DescribeCluster` 동작에 대해서 허용하는 policy를 만들고 role에 부여하도록 하자.
+
+아래에 policy 생성 시 policy의 ARN을 위한 resource 칸에 `계정_번호`가 있으니 개인의 계정 번호를 넣어주도록 하자.
+```sh
+BASTION_ROLE_NAME="BastionAccessRole"
+BASTION_ROLE_ARN=$(aws iam create-role \
+  --role-name $BASTION_ROLE_NAME \
+  --assume-role-policy-document file://<(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ec2.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+) \
+  --output text --query 'Role.Arn')
+
+echo "[+] Bastion IAM Role: $BASTION_ROLE_ARN"
+
+cat > eks-describe-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribeCluster"
+      ],
+      "Resource": "arn:aws:eks:ap-northeast-2:{계정_번호}:cluster/my-eks-cluster"
+    }
+  ]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name $BASTION_ROLE_NAME \
+  --policy-name EksDescribeClusterPolicy \
+  --policy-document file://eks-describe-policy.json
+```
+
+EC2 instance에 role을 부여하기 위해서는 role을 부여한 profile을 생성한 후 profile을 EC2 instance에 할당해야한다. 참고로 EC2는 직접 Role을 부여받을 수 없고 profile을 통해서 간접적으로 role을 부여받아야 한다.
+```sh
+# 인스턴스 프로파일 생성 후 Role 연결
+aws iam create-instance-profile --instance-profile-name BastionInstanceProfile
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name BastionInstanceProfile \
+  --role-name $BASTION_ROLE_NAME
+```
+
+이제 bastion을 위한 security group을 만들도록 하자. 내 IP 이외의  security group을 만들기 위해 필요한 것은 다음과 같다.
+1. vpc
+2. region
+
+```sh
+BASTION_SG_ID=$(aws ec2 create-security-group \
+  --group-name bastion-sg \
+  --description "Allow SSH and access to EKS VPC" \
+  --vpc-id $VPC_ID \
+  --region ap-northeast-2 \
+  --output text --query 'GroupId')
+```
+
+다음으로 생성한 security group에 ingress rule을 만들어 외부 접근을 최소한으로 하도록 하자.
+1. 내 컴퓨터 IP는 허용
+2. VPC 내부의 통신은 허용 (10.0.0.0/16)
+
+```sh
+# 내 IP는 허용
+MY_IP=$(curl -s http://checkip.amazonaws.com)
+aws ec2 authorize-security-group-ingress \
+  --group-id $BASTION_SG_ID \
+  --protocol tcp --port 22 --cidr ${MY_IP}/32 \
+  --region ap-northeast-2
+
+# EKS 내부 통신 허용 (VPC 내부)
+aws ec2 authorize-security-group-ingress \
+  --group-id $BASTION_SG_ID \
+  --protocol tcp --port 443 --cidr 10.0.0.0/16 \
+  --region ap-northeast-2
+
+echo "[+] Bastion SG created: $BASTION_SG_ID"
+```
+
+다음으로 EC2 bastion에 보안 접속하기 위한 SSH key-pair를 만들도록 하자.
+```sh
+aws ec2 create-key-pair \
+  --key-name bastion-key \
+  --query 'KeyMaterial' \
+  --region ap-northeast-2 \
+  --output text > bastion-key.pem
+```
+
+이제 bastion host용 EC2 instance를 만들도록 하자. 필요한 매개변수는 다음과 같다.
+1. image-id: ami-0c5b5fef8f4de7a4f을 써보자
+2. instance type: t3.micro
+3. security group
+4. subnet: public subnet을 설정하도록 하자.
+5. region: ap-northeast-2
+6. key pair
+7. instance profile: role부여를 위함 
+```sh
+BASTION_INSTANCE_ID=$(aws ec2 run-instances \
+  --image-id ami-0308297ba71025b4d \
+  --instance-type t3.micro \
+  --key-name bastion-key \
+  --security-group-ids $BASTION_SG_ID \
+  --subnet-id $PUB_SUBNET_ID \
+  --associate-public-ip-address \
+  --iam-instance-profile Name=BastionInstanceProfile \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bastion}]' \
+  --region ap-northeast-2 \
+  --query 'Instances[0].InstanceId' --output text)
+
+echo "[+] Bastion EC2 ID: $BASTION_INSTANCE_ID"
+```
+`BASTION_INSTANCE_ID`가 출력되었다면 제대로 만들어진 것이다. 이제 bastion host에 접속하기 위해 bastion host public ip를 갸져오도록 하자.
+
+```sh
+BASTION_PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids $BASTION_INSTANCE_ID \
+  --region ap-northeast-2 \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+echo "[+] SSH to: ssh -i bastion-key.pem ec2-user@$BASTION_PUBLIC_IP"
+```
+얻어왔다면 접속해보도록 하자.
+
+```sh
+ssh -i bastion-key.pem ec2-user@${BASTION_PUBLIC_IP}
+```
+
+# 4. Bastion과 EKS cluster 연결
+TODO: 설치한 서버에서 `aws-auth` configmap 설정하기
+
+bastion host에 접근했다면 EKS cluster에 접근하여 kubernetes resource를 다룰 수 있는 기본 cli들을 설치하도록 하자.
+```sh
+# AWS CLI v2
+sudo yum install unzip
+
+# curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+# unzip awscliv2.zip
+# sudo ./aws/install
+# aws --version
+
+# kubectl for EKS 1.33
+curl -LO "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+# 확인
+kubectl version --client
+```
+
+이제 
+```sh
+aws eks update-kubeconfig --name my-eks-cluster --region ap-northeast-2
+```
