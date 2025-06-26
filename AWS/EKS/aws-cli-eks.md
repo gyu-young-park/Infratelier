@@ -312,7 +312,34 @@ aws eks wait nodegroup-active --cluster-name my-eks-cluster --nodegroup-name my-
 ```
 잠시만 기다리면 nodegroup이 배포되고 AWS console에서 확인할 수 있다.
 
-# 3. Bastion EC2 instance 설정
+EKS cluster, nodegroup 배포에 성공했다면, 이제 배포한 host에서 `kubectl`로 접근해보도록 하자.
+```sh
+# kubectl for EKS 1.33
+curl -LO "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+# 확인
+kubectl version --client
+```
+
+`kubectl`이 설치되었다면 `kubectl`을 위한 kubeconfig를 설정해주어야 한다. `aws` cli를 사용해서 쉽게 설정이 가능하다. 단, 이 명령어는 반드시 eks cluster를 배포한 host에서만 성공한다.
+```sh
+aws eks update-kubeconfig --name my-eks-cluster --region ap-northeast-2
+```
+
+이제 kubernetes cluster에 잘 접근되는 지 확인해보자. 
+```sh
+kubectl get po -A
+NAMESPACE     NAME                      READY   STATUS    RESTARTS   AGE
+kube-system   aws-node-njrtz            2/2     Running   0          18m
+kube-system   coredns-c844dd74d-kllg5   1/1     Running   0          21m
+kube-system   coredns-c844dd74d-w268t   1/1     Running   0          21m
+kube-system   kube-proxy-dhgtc          1/1     Running   0          18m
+```
+위와 같이 pod들이 나왔다면 성공이다.
+
+# 3. Bastion EC2 instance 생성
 private subnet에 있는 EKS 용 instance에 직접 들어가서 `kubectl`을 사용하기 보다는 접근용 bastion host를 만드는 것이 일반적인 방법이다. 이는 보안적인 측면에서 장점이 있고 node에 대한 제한된 접근을 통해 최소 권한으로만 부여하여 시스템을 동작할 수 있다는 장점이 있다.
 
 bastion host를 통해서 기본적인 `kubectl` 명령들을 실행할 수 있도록 하면 된다.
@@ -457,19 +484,48 @@ echo "[+] SSH to: ssh -i bastion-key.pem ec2-user@$BASTION_PUBLIC_IP"
 ssh -i bastion-key.pem ec2-user@${BASTION_PUBLIC_IP}
 ```
 
+접속에 성공했다면 빠져 나오도록 하자.
+
 # 4. Bastion과 EKS cluster 연결
-TODO: 설치한 서버에서 `aws-auth` configmap 설정하기
+bastion host를 만들었으니, 이제 EKS cluster와 bastion host를 연결해보도록 하자. 
+
+먼저 bastion host에 접속하여 `kubectl`을 설정하기 전에 kubernetes cluster에 `aws-auth` configmap을 설정해야한다. 이는 kuberntes cluster의 RBAC 시스템에 따라 권한을 부여하는 과정으로 AWS role을 설정한 bastion host라도 해당 EKS cluster에 등록되지 않으면 `kubectl`로 접근이 안된다.
+
+따라서, `kubectl`을 쓸 수 있는 host에서 `aws-auth` configmap을 설정해주어야 한다. 우리의 경우 eks cluster를 프로비저닝한 host에서 하면 된다. 
+
+우리가 만든 bastion을 `aws-auth` configmap에 설정하기 위해서는 bastion에 부여된 role arn을 설정해주면 된다. 
+1. bastion host에 부여된 Role ARN
+```sh
+BASTION_HOST_ROLE=$(aws iam get-instance-profile   --instance-profile-name BastionInstanceProfile   --query 
+'InstanceProfile.Roles[0].Arn')
+
+echo $BASTION_HOST_ROLE
+```
+`"arn:aws:iam::970547376416:role/BastionAccessRole"` 이런 식으로 나오면 성공이다.
+
+이제 해당 bastion role arn을 EKS aws-auth configmap에 설정해주면 된다.
+```sh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapRoles: |
+    - rolearn: arn:aws:iam::970547376416:role/EKSNodeRole
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+    - rolearn: arn:aws:iam::970547376416:role/BastionAccessRole
+      username: bastion-admin
+      groups:
+        - system:masters
+```
+위와 같이 aws-auth configmap을 바꿔주고 이제 bastion host로 가면 된다.
 
 bastion host에 접근했다면 EKS cluster에 접근하여 kubernetes resource를 다룰 수 있는 기본 cli들을 설치하도록 하자.
 ```sh
-# AWS CLI v2
-sudo yum install unzip
-
-# curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-# unzip awscliv2.zip
-# sudo ./aws/install
-# aws --version
-
 # kubectl for EKS 1.33
 curl -LO "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl"
 chmod +x kubectl
@@ -479,7 +535,102 @@ sudo mv kubectl /usr/local/bin/
 kubectl version --client
 ```
 
-이제 
+이제 eks update-kubeconfig 명령어를 사용해서 bastion host의 `kubectl`에 `kubeconfig`를 설정해주도록 하자. 
 ```sh
 aws eks update-kubeconfig --name my-eks-cluster --region ap-northeast-2
+```
+
+설정이 완료되었다면 `kubectl`이 제대로 동작하는 지 보도록 하자.
+```sh
+kubectl get po -A
+
+NAMESPACE     NAME                      READY   STATUS    RESTARTS   AGE
+kube-system   aws-node-njrtz            2/2     Running   0          46m
+kube-system   coredns-c844dd74d-kllg5   1/1     Running   0          49m
+kube-system   coredns-c844dd74d-w268t   1/1     Running   0          49m
+kube-system   kube-proxy-dhgtc          1/1     Running   0          46m
+```
+
+성공적으로 bastion host에 연결된 것이다. 
+
+이제 마지막으로 pod를 하나 배포해고 요청을 보내보도록 하자.
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25.3
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+```
+AWS EKS는 `LoadBalancer` 타입의 서비스를 만들면 ELB를 자동으로 생성하므로, 외부에서도 접근이 가능하다. 참고로 다음의 rule에 따라서 `LoadBalancer`의 ELB가 배정된다.
+1. Loadbalancer + HTTP: ALB
+2. Loadbalancer + TCP: NLB
+
+```sh
+kubectl get svc nginx-service
+NAME            TYPE           CLUSTER-IP     EXTERNAL-IP                                                                    PORT(S)        AGE
+nginx-service   LoadBalancer   172.20.83.79   a558ac31277e74860b135a4c2d62b3df-1198762502.ap-northeast-2.elb.amazonaws.com   80:32183/TCP   4m13s
+```
+생성된 `a558ac31277e74860b135a4c2d62b3df-1198762502.ap-northeast-2.elb.amazonaws.com`에 `curl`을 보내어 nginx index화면이 나오면 성공이다.
+
+```sh
+curl a558ac31277e74860b135a4c2d62b3df-1198762502.ap-northeast-2.elb.amazonaws.com
+...
+<h1>Welcome to nginx!</h1>
+...
+```
+이렇게 나오면 성공이다. 
+
+# 5. EKS cluster 내리기
+다른 AWS resource들은 비용적으로 그렇게 비싸지 않지만, EKS는 조금 비싸다 한달 기준으로 72,000이 나올 수 있으므로 공부를 위해서라면 배포하고 바로바로 내리는 것이 좋다.
+
+```sh
+aws eks delete-nodegroup \
+  --cluster-name my-eks-cluster \
+  --nodegroup-name my-node-group \
+  --region ap-northeast-2
+
+# Node Group 삭제 완료까지 대기
+aws eks wait nodegroup-deleted \
+  --cluster-name my-eks-cluster \
+  --nodegroup-name my-node-group \
+  --region ap-northeast-2
+
+
+aws eks delete-cluster \
+--name my-eks-cluster \
+--region ap-northeast-2
+
+# 클러스터 삭제 완료까지 대기
+aws eks wait cluster-deleted \
+  --name my-eks-cluster \
+  --region ap-northeast-2
 ```

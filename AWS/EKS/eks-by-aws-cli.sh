@@ -262,18 +262,42 @@ sudo mv kubectl /usr/local/bin/
 kubectl version --client
 
 # 10. 테스트용 nginx Pod 배포
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Pod
+```
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: nginx-test
+  name: nginx
+  labels:
+    app: nginx
 spec:
-  containers:
-  - name: nginx
-    image: nginx
-    ports:
-    - containerPort: 80
-EOF
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25.3
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+```
 
 echo "--- 요약 ---"
 echo "VPC ID: $VPC_ID"
