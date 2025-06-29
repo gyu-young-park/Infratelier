@@ -47,3 +47,5 @@ else:
     print("root 아님: " + arn)
 ```
 응답으로 현재 계정의 정보가 나온다면 성공한 것이다.
+
+boto3에 대한 docs를 통해서 자세한 사용 법들을 확인하면 된다. https://boto3.amazonaws.com/v1/documentation/api/latest/index.html
