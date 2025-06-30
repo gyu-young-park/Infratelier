@@ -40,7 +40,7 @@ echo "plugin_cache_dir"=\"$HOME/.terraform.d/plugin-cache\"" > ~/.terraformrc
 ## Terraform 블록
 외울 필요는 없고, 대표적으로 다음이 있다.
 
-1. resource: resource를 배포하기 위해 사용하는 타입
+1. resource: resource를 배포, 삭제, 수정하기 위해 사용하는 타입
 2. data: 외부에 있는 데이터를 가져오기 위한 타입
 3. variable: 변수를 사용하기 위한 타입
 4. output: 출력하기 위한 타입
@@ -87,7 +87,9 @@ output "test" {
 }
 ```
 
-실행하기 이전에 provider를 설이해야하므로 해당 스크립트가 있는 path로가서,  `terrform init`을 실행해주도록 하자. 이 다음 `terraform plan`을 통해서 앞으로 어떤 동작이 실행될 지 확인할 수 있다.
+`data`가 api 실행이고 그 결과를 `output`으로 전달하는 것이 전부이다. 참고로 `data`는 HTTP GET처럼 api를 실행해 data를 가져올 뿐, 수정, 삭제, 추가 등의 연산을 하진 않는다.
+
+실행하기 이전에 provider를 설치해야하므로 해당 스크립트가 있는 path로가서,  `terrform init`을 실행해주도록 하자. 이 다음 `terraform plan`을 통해서 앞으로 어떤 동작이 실행될 지 확인할 수 있다.
 
 이제 실행해보도록 하자.
 
@@ -109,3 +111,70 @@ caller identtiy가 `test`라는 output에 잘 전달된 것을 볼 수 있다.
 
 `ls -al`을 실행해서보면 `./terraform.tfstate`가 생긴 것을 볼 수 있다. 이는 마지막으로 기록된 값들을 정리해준 것이다.
 
+## VPC 만들기
+사용 방법은 terraform의 각 provider 예시를 보면서 하면 된다.
+
+https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc
+
+docs를 보면 `resource`와 `data source`가 있다. `data source`가 위에서 우리가 만든 `data` 블록 부분이랑 같다. 이 둘을 정리하면 다음과 같다.
+
+1. resource: provider(AWS, GCP, Azure 등)의 리소스를 생성, 수정, 삭제한다. 가령 EC2, VPC, S3 생성
+2. data: 리소스를 조회만 하는 API로 HTTP GET이랑 같다. 가령 `aws_ami`로 AMI 정보를 가져오는 것이 있다.
+
+terraform 프로젝트 구조를 만들 때에는 다음의 일반적인 구성 방식을 따른다.
+
+```sh
+my-terraform-project/
+├── main.tf          주요 리소스 정의 (핵심 인프라)
+├── variables.tf     변수 정의
+├── outputs.tf       출력 값 정의
+├── provider.tf      provider 설정 (AWS, GCP 등)
+├── terraform.tfvars 변수값 설정 (실제 값)
+└── backend.tf       상태 저장소(S3 등) 정의
+```
+VPC라는 resource를 만들기 위해서는 `main.tf`에서 `resource` block에 정의를 하는 것이 핵심이 되는 것이다. 또한, `provider`는 한 번 해당 프로젝트에서 설정해놓았다면 또 설정할 필요는 없다.
+
+- main.tf
+```tf
+resource "aws_vpc" "this" {
+  cidr_block = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support = true
+
+  tags = {
+    Name = "test-vpc"
+  }
+}
+
+output "our_vpc" {
+    value = aws_vpc.this
+}
+```
+`resource`에 `aws_vpc`리는 type을 지정한 것을 볼 수 있다. `aws_vpc`를 만들겠다는 것이고, 해당 vpc 객체를 여기서는 `this`라는 변수로 다루겠다는 것이다. 
+
+vpc 객체의 결과를 `our_vpc` output에 지정한 것이다.
+
+이제 실행해보도록 하자.
+
+```sh
+terraform init
+terraform plan
+```
+`plan`까지 확인하면 어떠한 리소스들이 생성될 지 확실하게 볼 수 있다.
+
+다음으로 실제 vpc를 만들어보도록 하자.
+```sh
+terraform apply
+```
+
+약간의 시간 후에 AWS console로 가면 `test_vpc`가 생성 되는 것을 볼 수 있다. 
+
+`cat ./terraform.tfstate`으로 확인해보면 우리가 만든 `test_vpc`에 대한 자세한 정보가 정의된 것을 볼 수 있다.
+
+삭제하는 것도 매우 간단한데, 다음의 명령어 하나면 된다.
+```sh
+terraform destroy
+```
+`yes`를 눌러주면 삭제된다.
+
+`boto3`, `aws cli`로 aws resource를 관리하는 것보다 훨씬 간단한 것을 볼 수 있다.
