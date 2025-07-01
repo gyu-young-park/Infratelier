@@ -422,4 +422,53 @@ Changes to Outputs:
 우리가 설정한 변수들이 잘 나온 것을 볼 수 있다.
 
 ## Local values
+변수는 상수만 입력이 가능하고 다른 변수를 참조하지 못할 뿐더러 동적으로 수정이 안되는 immutable한 성질이 있다고 했다. 즉 다음과 같은 상황에서 에러가 발생한다.
 
+```tf
+variable "prefix_test" {
+  default = "${var.prefix}-${var.common}"
+}
+```
+
+변수에는 다음의 한계가 있다.
+1. 변수는 배포 중에 동적인 생성이나 수정이 불가
+2. 다른 변수를 참조하거나 조합한 새로운 변수를 만들 수 없다.
+3. 조건문이나 함수 활용이 불가
+4. 또한, 데이터 소스를 활용하는 경우 값을 변수에 할당 불가
+
+결국 변수만으로는 코드 중복을 막을 수 없고, 유지보수의 어려움이 생긴다.
+
+그래서 이러한 문제를 해결하기 위해서 `local values`가 나오게 되었다.
+
+```tf
+locals {
+  prefix_test = "${var.prefix}-${var.common}"
+  prefix_prod = "${var.prefix}-prod"
+}
+
+resource "aws_iam_user" "test3" {
+  name = "${local.prefix_test}-user"
+}
+```
+물론 `resource`에 쓸 때 locals를 안쓰고 `name = "${var.prefix}-${var.common}-user"`로 써줘도 같은 기능을 하는 코드이지만, 유지 보수가 어렵고 프로그래밍 불가능하다는 단점이 있다.
+
+또한, `locals`를 사용하면 data source를 사용해서 결과값을 저장하는 것도 가능하다.
+
+```tf
+data "aws_caller_identity" "current" {}
+
+### 불가능
+variable "account_id" {
+  default = data.aws_caller_identity.current.account_id
+}
+```
+다음의 경우 `variable`로 `aws_caller_identtiy`값을 `account_id`로 저장하는 코드인데, 이는 실패한다. 
+
+위의 코드를 아래와 같이 `locals`를 사용하도록 수정하면 `account_id`에 결과가 저장되는 것을 볼 수 있다.
+```tf
+data "aws_caller_identity" "current" {}
+
+locals {
+  account_id = data.aws_caller_identity.current.account_id
+}
+```
