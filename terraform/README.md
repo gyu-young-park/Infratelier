@@ -150,7 +150,9 @@ output "our_vpc" {
     value = aws_vpc.this
 }
 ```
-`resource`에 `aws_vpc`리는 type을 지정한 것을 볼 수 있다. `aws_vpc`를 만들겠다는 것이고, 해당 vpc 객체를 여기서는 `this`라는 변수로 다루겠다는 것이다. 
+`resource`에 `aws_vpc`리는 type을 지정한 것을 볼 수 있다. `aws_vpc`를 만들겠다는 것이고, 해당 vpc 객체를 여기서는 `this`라는 변수로 다루겠다는 것이다. 즉, `this`는 여기서만 쓰이는 로컬 네임이다.
+
+`this`는 `aws_vpc` resource type의 인스턴스 같은 것이므로, `aws_vpc.this`로 접근이 가능하다.
 
 vpc 객체의 결과를 `our_vpc` output에 지정한 것이다.
 
@@ -178,3 +180,246 @@ terraform destroy
 `yes`를 눌러주면 삭제된다.
 
 `boto3`, `aws cli`로 aws resource를 관리하는 것보다 훨씬 간단한 것을 볼 수 있다.
+
+## 변수
+변수를 통해서 테라폼의 코드를 더욱 효율적으로 만들 수 있다. 변수를 선언하기 위해서는 `variable`이라는 지시자를 사용한다.
+
+단, terraform의 변수는 초기에 설정된 값에서 동적으로 바뀌지 않는다. 즉, immutable하다고 생각하면 된다. 또한, 다른 변수의 값을 참조하지 못하는데, 이는 상수값 즉, literal한 값만 받을 수 있다는 한계가 있다. 이를 해결하기 위해서 나중에 `locals`에 대해서 알아보자.
+
+```tf
+variable "string_var" {
+  description = "string variable"
+  type = string
+  default = "rex"
+}
+
+output "string_output" {
+  value = var.string_var
+}
+```
+
+`variable`로 `string_var` 변수를 선언하고 `default`값은 `rex`이고 `type`은 문자열이라는 것이다. 참고로 `type`과 `description`은 권장 사항이지만 써주는 것이 좋다.
+
+이 `string_var` 변수를 사용하기 위해서 `var.string_var`이라고 쓴 것을 볼 수 있다.
+
+변수에 초기값을 집어넣는 방법은 3가지 방법이 있다.
+1. default
+2. 환경 변수: `TF_VAR_변수명=변수값` 형식을 사용하면 된다. 위의 예제의 경우는 `TF_VAR_string_var=hello`라고 하는 방법이 있다.
+3. .tfvars 파일 사용: `terraform.tfvars`에 `string_var="hello"`라고 정의하면 적용된다.
+
+적용 순서는 `.tfvars`를 참조하고 `TF_VAR_변수명` 다음에 `default`가 적용된다.
+
+## 자료형
+테라폼은 다양한 종류의 자료형을 지원하는데, 자료형들은 혼합하여 새로운 데이터 구조를 만들 수 있다. 
+
+1. `string`
+
+```tf
+variable "string_var" {
+    description = "string variable"
+    type = string
+    default = "rex"
+}
+
+output "string_var" {
+    value = var.string_var
+}
+```
+
+2. `number`
+
+```tf
+variable "number" {
+    type = number
+    default = 1
+}
+```
+
+3. `bool`
+
+```tf
+variable "bool" {
+    type = bool
+    default = false
+}
+
+output "bool" {
+    value = var.bool
+}
+```
+
+4. `list`: list의 경우 element의 type을 하나만 사용할 수 있다. `list(number)`과 같이 `type`을 만들 수 있고, `var.list[0]`과 같이 인덱싱 연산이 가능하다.
+
+```tf
+# terraform의 list는 하나의 타입만 가질 수 있다.
+variable "list" {
+    type = list(number)
+    default = [ 1,2,3,4 ]
+}
+
+output "list" {
+    value = var.list[0]
+}
+```
+
+5. `tuple`: 여러 type을 하나의 tuple로 만들 수 있다. `tuple([number, string, bool])`처럼 사용할 수 있고 인덱싱 연산이 가능하다.
+
+```tf
+# tuple은 여러 타입을 하나의 구조체 처럼 묶는다.
+variable "tuple" {
+    type = tuple([number, string, bool])
+    default = [ 1, "str", false ]
+}
+
+output "tuple" {
+  value = var.tuple
+}
+```
+
+6. `set`: 중복된 값을 가질 수 없다. `set(string)`으로 사용 가능하지만 인덱싱 연산이 불가능하다.
+
+```tf
+# 중복된 값을 허용하지 않는다.
+variable "set" {
+    type = set(string)
+    default = ["aa", "a", "aa"]
+}
+
+output "set" {
+  value = var.set
+  # value = var.set[0] # indexing 불가능
+}
+```
+인덱싱 연산이 불가능하기 때문에 index 연산이 가능한 list로 변환이 가능하다.
+```tf
+# set -> list
+output "tolist" {
+    value = tolist(var.set)[0] # indexing 가능
+}
+
+# list -> set
+output "toset" {
+  value = toset(var.list)
+}
+```
+
+7. `map`: key는 string이고 value type은 지정하면 된다. `map(number)` 이렇게 선언 시에 value type이 number이다.
+
+```tf
+variable "map" {
+    type = map(number)
+    default = {
+      "rex" = 1
+      "vincent" = 2
+      "gyu" = 3
+    }
+}
+
+output "map" {
+    value = var.map
+    # value = var.map["rex"]
+    # valur = var.map.rex 
+}
+```
+
+8. object: 1~7까지의 원시 타입을 기반으로 하나의 구조체를 만들어 낼 수 있다. 마치 json을 생각하면 된다.
+```tf
+variable "vpc_var" {
+    type = object({
+      cidr = string
+      dns = bool
+      hostname = bool
+    })
+
+    default = {
+      cidr = "10.0.0.0/16"
+      dns = true
+      hostname = true
+    }
+}
+
+output "vpc_var" {
+  value = var.vpc_var
+  # value = var.vpc_var["cidr"]
+  # value = var.vpc_var.cidr
+}
+```
+
+이렇게 만든 `vpc_var`이라는 변수를 사용하여 vpc resource를 만들 때 사용할 수 있다.
+```tf
+resource "aws_vpc" "this" {
+    cidr_block = var.vpc_var.cidr
+    enable_dns_hostnames = var.vpc_var.hostname
+    enable_dns_support = var.vpc_var.dns
+
+    tags = {
+      "Name" = "${var.string_var}-vpc" 
+    }
+}
+```
+shell에서 보듯이 `"${var.string_var}-vpc"`와 같이 문자 데이터 삽입이 가능하다. 
+
+`terraform plan`을 사용하면 어떤 식으로 변수들이 output에 나오는 지 확인 할 수 있다. 예제 variable_example`에 있는 `main.tf`을 실행하면 다음과 같이 나온다.
+
+```sh
+  # aws_vpc.this will be created
+  + resource "aws_vpc" "this" {
+      + arn                                  = (known after apply)
+      + cidr_block                           = "10.0.0.0/16"
+      + default_network_acl_id               = (known after apply)
+      + default_route_table_id               = (known after apply)
+      + default_security_group_id            = (known after apply)
+      + dhcp_options_id                      = (known after apply)
+      + enable_dns_hostnames                 = true
+      + enable_dns_support                   = true
+      + enable_network_address_usage_metrics = (known after apply)
+      + id                                   = (known after apply)
+      + instance_tenancy                     = "default"
+      + ipv6_association_id                  = (known after apply)
+      + ipv6_cidr_block                      = (known after apply)
+      + ipv6_cidr_block_network_border_group = (known after apply)
+      + main_route_table_id                  = (known after apply)
+      + owner_id                             = (known after apply)
+      + region                               = "ap-northeast-2"
+      + tags                                 = {
+          + "Name" = "rex-vpc-10"
+        }
+      + tags_all                             = {
+          + "Name" = "rex-vpc-10"
+        }
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + bool       = false
+  + list       = 1
+  + map        = {
+      + gyu     = 3
+      + rex     = 1
+      + vincent = 2
+    }
+  + set        = [
+      + "a",
+      + "aa",
+    ]
+  + string_var = "rex"
+  + tolist     = "a"
+  + toset      = [
+      + 1,
+      + 2,
+      + 3,
+      + 4,
+    ]
+  + tuple      = 1
+  + vpc_var    = {
+      + cidr     = "10.0.0.0/16"
+      + dns      = true
+      + hostname = true
+    }
+```
+
+우리가 설정한 변수들이 잘 나온 것을 볼 수 있다.
+
+## Local values
+
