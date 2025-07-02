@@ -472,3 +472,188 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
 }
 ```
+
+## Builtin functions
+https://developer.hashicorp.com/terraform/language/functions
+
+위의 링크에 들어가면 terraform built-in function 관련 공식 문서를 볼 수 있다. 
+
+숫자, 문자열, 집합, 인코딩, 파일 등 다양한 함수들이 존재한다.
+
+다음의 예제는 다양한 built-in 함수의 사용을 보여준다.
+```tf
+variable "prefix" {
+    default = "company"
+}
+
+variable "common" {
+    default = "test"
+}
+
+# 문자열 분리
+locals {
+  prefix_test = "${var.prefix}-${var.common}"
+  prefix_prod = "${var.prefix}-prod"
+  splited_prefix = split("-", local.prefix_test)[0]
+}
+
+output "splited_prefix" {
+  value = local.splited_prefix
+}
+
+# 길이 출력
+output "length" {
+  value = length([1,2,3])
+}
+
+# list 합치기
+output "concat" {
+  value = concat(["a", ""], ["b", "c"])
+}
+```
+
+`terraform plan`으로 결과를 확인하면 다음과 같다.
+```sh
+Changes to Outputs:
+  + concat         = [
+      + "a",
+      + "",
+      + "b",
+      + "c",
+    ]
+  + length         = 3
+  + splited_prefix = "company"
+```
+빌트인 함수들이 잘 적용된 것을 볼 수 있다.
+
+참고로 terraform에서 사용자 정의 함수는 제공하지 않는다.
+
+## 반복문
+반복문은 두 가지가 있다. `count`, `for_each` 둘이 있다.
+
+1. 리소스 또는 모듈 블록을 반복하기 위해 사용한다.
+2. 유저 100개를 만들기 위해 리소스 100개를 모두 코드에 넣기보다는 반복문을 사용한다.
+3. `count`
+  1. 명시된 개수만큼 리소스를 생성한다.
+  2. 생성된 순서(index)를 기준으로 리소스 존재 유뮤를 판단한다.
+4. `for_each`
+  1. python의 dict와 비슷하다.
+  2. 키의 개수를 기준으로 반복을 수행한다.
+  3. count와 달리 인덱스가 아닌 키가 리소스 존재 유무를 판단하는 기준이 된다.
+
+`count` 사용법은 다음과 같다.
+
+```tf
+resource "aws_iam_user" "this" {
+  count = 3
+  name  = "rex-${count.index}"
+}
+
+output "users" {
+  value = aws_iam_user.this
+  # value = aws_iam_user.this[0].arn
+  # value = aws_iam_user.this[*].arn
+}
+```
+`count`를 3으로 주었으므로 0,1,2로 순회해서 `resource`를 생성한다. `aws_iam_user.this[*]`로 전체 데이터를 list로 받아올 수도 있다.
+
+count의 문제점이 있는데, 다음을 보도록 하자.
+
+```tf
+variable "users" {
+  type = list(string)
+  default = ["rex", "vincent", "june"]
+}
+
+resource "aws_iam_user" "this" {
+  count = length(var.users)
+  name = "${var.users[count.index]}-${count.index}"
+}
+```
+`var.users`에 있는 데이터 수인 3만큼 순회하게 되고, 3개의 IAM 유저를 만들게 된다. 즉, `rex-0`, `vincent-1`, `june-2`도 사라진다.
+
+그런데, 만약 가운데의 `vincent`를 삭제한다고 하자. 이때 문제가 발생하는데, `vincenet`만 지우고 다시 실행해버리면 `aws`에서 `june-2`를 삭제해버리고 `june-1`을 생성한다. 정리하면 `vincent-1`이 `june-1`로 바뀌었다고 생각해서 `vincent-1`을 삭제하고 `june-1`을 만들지만 `june-2`까지 순회가 돌지 않으므로 이전에 만든 `june-2`는 삭제해버리는 것이다.
+
+이는 현재 상태 정보와의 차이로 인해 발생한 것이다. 따라서, count 사용은 조심해야한다.
+
+count를 사용하는 경우는 다음과 같다.
+1. 단순 반복이 필요할 때
+2. 리소스의 고유성이 중요하지 않을 때
+3. 조건 표현식(conditional expressions)을 통해 리소스 생성 여부를 결정할 떄
+
+고유성이 중요하면 `for_each`를 사용해서 '키'가 존재하는 자료형이나 데이터를 사용하여 반복시키도록 한다. 
+
+```tf
+variable "users" {
+  type = list(string)
+  default = ["rex", "vincent", "june"]
+}
+
+resource "aws_iam_user" "this" {
+  for_each = toset(var.users)
+  name = each.key
+  path = startswith(each.value, "/") ? each.value : "/"
+}
+```
+`for_each`로 반복을 돌게된다. `set`의 경우 key-value가 따로 있는게 아니라, key-value가 동일한 값이다. 따라서, `each.key`랑 `each.value`랑 같다.
+
+`object`로 key-value를 지정해서 사용할 수도 있다.
+```tf
+variable "users_object" {
+  type = object({
+    rex1 = string
+    vincent = string
+    june = string
+  })
+
+  default = {
+    rex1 = "/good/"
+    vincent = "/bad/"
+    june = "hmm/"
+  }
+}
+
+resource "aws_iam_user" "this2" {
+  for_each = var.users_object
+  name = each.key
+  path = each.value
+}
+```
+
+`terraform plan`으로 보면 다음과 같다.
+
+```sh
+# aws_iam_user.this2["june"] will be created
+  + resource "aws_iam_user" "this2" {
+      + arn           = (known after apply)
+      + force_destroy = false
+      + id            = (known after apply)
+      + name          = "june"
+      + path          = "hmm/"
+      + tags_all      = (known after apply)
+      + unique_id     = (known after apply)
+    }
+
+  # aws_iam_user.this2["rex1"] will be created
+  + resource "aws_iam_user" "this2" {
+      + arn           = (known after apply)
+      + force_destroy = false
+      + id            = (known after apply)
+      + name          = "rex1"
+      + path          = "/good/"
+      + tags_all      = (known after apply)
+      + unique_id     = (known after apply)
+    }
+
+  # aws_iam_user.this2["vincent"] will be created
+  + resource "aws_iam_user" "this2" {
+      + arn           = (known after apply)
+      + force_destroy = false
+      + id            = (known after apply)
+      + name          = "vincent"
+      + path          = "/bad/"
+      + tags_all      = (known after apply)
+      + unique_id     = (known after apply)
+    }
+```
+고유성이 있는 경우 object나 set, map 처럼 key-value 기반의 순회가 훨씬 더 안정적이고 예상 가능한 결과가 나온다.
