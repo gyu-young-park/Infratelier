@@ -597,6 +597,8 @@ resource "aws_iam_user" "this" {
 ```
 `for_each`로 반복을 돌게된다. `set`의 경우 key-value가 따로 있는게 아니라, key-value가 동일한 값이다. 따라서, `each.key`랑 `each.value`랑 같다.
 
+이렇게 만들면 배열에서 `vincent`를 지워도 `june` 리소스가 사리지지 않는다. 즉, `count`에서 발생하는 문제가 생기지 않는다는 것이다.
+
 `object`로 key-value를 지정해서 사용할 수도 있다.
 ```tf
 variable "users_object" {

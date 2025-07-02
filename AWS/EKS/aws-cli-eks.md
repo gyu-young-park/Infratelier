@@ -501,7 +501,7 @@ BASTION_HOST_ROLE=$(aws iam get-instance-profile   --instance-profile-name Basti
 
 echo $BASTION_HOST_ROLE
 ```
-`"arn:aws:iam::970547376416:role/BastionAccessRole"` 이런 식으로 나오면 성공이다.
+`"arn:aws:iam::xxxxxxxxxxxxxx:role/BastionAccessRole"` 이런 식으로 나오면 성공이다.
 
 이제 해당 bastion role arn을 EKS aws-auth configmap에 설정해주면 된다.
 ```sh
@@ -512,12 +512,12 @@ metadata:
   namespace: kube-system
 data:
   mapRoles: |
-    - rolearn: arn:aws:iam::970547376416:role/EKSNodeRole
+    - rolearn: arn:aws:iam::xxxxxxxxxxxxxx:role/EKSNodeRole
       username: system:node:{{EC2PrivateDNSName}}
       groups:
         - system:bootstrappers
         - system:nodes
-    - rolearn: arn:aws:iam::970547376416:role/BastionAccessRole
+    - rolearn: arn:aws:iam::xxxxxxxxxxxxxx:role/BastionAccessRole
       username: bastion-admin
       groups:
         - system:masters
