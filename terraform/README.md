@@ -659,3 +659,75 @@ resource "aws_iam_user" "this2" {
     }
 ```
 고유성이 있는 경우 object나 set, map 처럼 key-value 기반의 순회가 훨씬 더 안정적이고 예상 가능한 결과가 나온다.
+
+## 표현식
+값을 반환하는 식을 의미한다. python의 list comprehension같은 것처럼 terraform에는 다음의 expression이 있다.
+
+1. Conditional Expressions
+2. For Expressions
+3. Splat Expressions
+
+`Splat Expressions`은 이전에 배운 list나 Map처럼 순회 가능한 자료구조에서 `[*]`와 같이 여러 값을 한꺼번에 꺼내거나 어떤 필드를 꺼낼 때 사용하는 것을 말한다. 따라서, Conditional Expressions와 For Expressions에 대해서 알아보자.
+
+먼저 conditional expressions에 대해서 알아보자
+```tf
+variable "need_group" {
+  default = false
+}
+
+resource "aws_iam_group" "this" {
+    count = var.need_group ? 1 : 0
+    name = "this_is_my_group"
+    path = "/"
+}
+```
+`count = var.need_group ? 1 : 0`이 부분을 보면 `var.need_group`이 true이면 count가 1이므로 `aws_iam_group`을 만들고, false이면 안만드는 것이다. `count`와 `conidtional expression`을 함께 조합해서 이렇게 잘 사용한다.
+
+단, 조심할 것은 `count`를 사용했기 때문에 `output`에 `this`는 list 형식이라는 것을 잊지 말도록 하자.
+
+`for expression`은 다음과 같이 쓸 수 있다.
+
+```tf
+variable "users" {
+  default = ["rex", "vincent", "june"]
+}
+
+resource "aws_iam_user" "count" {
+  for_each = toset([for user in var.users : user])
+  name = each.key
+  path = "/"
+}
+```
+`for user in var.users : user`이 바로 `for expression`이다. `user`가 각 iteration에서 쓸 `user` 데이터인 것이다.
+
+`for expression`은 더 나아가서 순회를 돌면서 `if`문도 사용할 수 있다.
+
+```tf
+resource "aws_iam_user" "count" {
+  for_each = toset([for user in var.users : user if user != "vincent"])
+  name = each.key
+  path = "/"
+}
+```
+`vincent`가 아닌 경우만 추가하는 코드를 만들 수 있다.
+
+또한, object에 대해서 key-value 형식으로 `for expression`도 가능하다.
+
+```tf
+variable "users_with_path" {
+    default = {
+        rex = "/admin/"
+        vincent = "/admin/"
+        june = "/users/"
+    }
+}
+
+resource "aws_iam_user" "for_kv" {
+    for_each = { for k, v in var.users_with_path : k => v if k != "june"}
+    name = each.key
+    path = each.value
+}
+```
+이번에는 `for expression`이 살짝 다른데, `k => v`로 써주어야 한다. 이러한 부분들은 외우지 말고 기억만했다가, 나중에 참고해서 쓰면 된다. 여기서는 `june`이 아닌 경우에만 `aws_iam_user`를 만들도록 한 것이다.
+
+## Dynamic Blocks
