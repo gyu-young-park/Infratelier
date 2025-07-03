@@ -806,3 +806,56 @@ resource "aws_security_group" "allow_http_https" {
 ```
 `ingress_rules`을 dynamic block이 순회하면서 `ingress` sub block에 대한 데이터들을 입력해준다. 재밌는 것은 `ingress_rules` 변수의 각 item에 접근할 때 `dynamic` block의 이름으로 접근한다는 것인데, 여기서는 `ingress`으로 `ingress.value["from_port"]` 이렇게 접근하는 것을 볼 수 있다.
 
+## 멀티 프로바이더
+1. 하나의 폴더에서 여러 리전 또는 여러 계정에 배포하고 싶을 때 사용
+2. 보안 관련 리소스 특성 상 한 번에 배포해야 하는 케이스가 많다.
+  1. Macie, GuardDuty, Inspector emd
+  2. 리전 또는 계정 외 형상이 비슷한 경우에 고려 가능
+3. 다양한 종류의 프로바이더를 사용하는 것 또한 '멀티'라고 볼 수 있지만 보통은 동일 프로바이더를 대상으로 말한다.
+
+다음의 예제를 보도록 하자.
+```tf
+# default Provider
+provider "aws" {
+    region = "us-east-1"
+}
+
+# alias로 provider 구분
+provider "aws" {
+    region = "ap-northeast-2"
+    alias = "apne2"
+}
+
+resource "aws_vpc" "use1" {
+    cidr_block = "10.0.0.0/16"
+    tags = {
+        Name = "use1-dynamic-block-vpc"
+    }  
+}
+
+# multi provider 사용 시
+# provider를 꼭  명시
+resource "aws_vpc" "apne2" {
+    cidr_block = "10.0.0.0/16"
+    tags = {
+        Name = "apne2-dynamic-block-vpc"
+    }  
+
+    provider = aws.apne2
+}
+```
+두 개의 리전이 있는 것을 볼 수 있다.
+1. `us-east-1`은 default region이다.
+2. `ap-northeast-2`은 두 번재 region이고 구분하기위해서 alias로 `apne2`을 주었다. 
+
+`apne2`를 resource 블럭에서 `provider`라는 attribute를 주면 된다.
+
+조심해야할 것은 만약 provider에 대한 수정 사항이 있다면 반드시 기존의 resource를 삭제하고 수정하는 것이 좋다. 왜냐하면 provider를 지정한 값을 다른 값으로 바꾸면 이전 provider에서 생성했던 resource들이 삭제되지 않는다. 
+
+참고로 이렇게 multi provider 상황에서 특정 provider가 적용된 resource만 없애고 싶을 수 있다. 이 경우 terraform 명령어에서 `-terget` 옵션을 주면 된다.
+
+```sh
+terraform destroy -target=aws_vpc.apne2
+```
+`aws_vpc` resource 중에서 `apne2`라는 이름을 가진 resource만 없앤다는 것이다. `aws_vpc.use1`은 삭제되지 않고 남는다.
+
