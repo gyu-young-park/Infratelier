@@ -731,3 +731,78 @@ resource "aws_iam_user" "for_kv" {
 이번에는 `for expression`이 살짝 다른데, `k => v`로 써주어야 한다. 이러한 부분들은 외우지 말고 기억만했다가, 나중에 참고해서 쓰면 된다. 여기서는 `june`이 아닌 경우에만 `aws_iam_user`를 만들도록 한 것이다.
 
 ## Dynamic Blocks
+다음의 코드를 보도록 하자.
+
+```tf
+resource "aws_vpc" "this" {
+    cidr_block = "10.0.0.0/16"
+    tags = {
+      Name = "dynamic-block-vpc"
+    }
+}
+
+resource "aws_security_group" "allow_http_https" {
+    name = "allow_http_https"
+    vpc_id = aws_vpc.this.id
+
+    ingress {
+        from_port = 80
+        to_port = 80
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    ingress {
+        from_port = 443
+        to_port = 443
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+}
+```
+vpc를 만들고 security group을 설정하는 부분이다. `name`, `vpc_id`와 같은 경우는 하나의 attribute이지만 `ingress`와 같은 것은 sub block으로 set이나 map처럼 여러 번 쓸 수 있거나 object와 같은 형식을 가진다.
+
+지금은 `ingress`로 security group의 인바운드 룰을 하나하나 설정하고 있지만, 이것이 여러 개를 설정해야할 때면 하나하나 설정해주는 것이 힘들 때가 있다. 이를 위해서 terraform에서는 여러 번 입력해야하는 sub block들을 위해서 `dynamic blocks`를 제공한다. 
+
+```tf
+variable "ingress_rules" {
+  description = "List of ingress rules"
+  type = list(object({
+    from_port   = number
+    to_port     = number
+    protocol    = string
+    cidr_blocks = list(string)
+  }))
+  default = [
+    {
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    },
+    {
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+resource "aws_security_group" "allow_http_https" {
+    name = "allow_http_https"
+    vpc_id = aws_vpc.this.id
+
+    dynamic "ingress" {
+      for_each = var.ingress_rules
+      content {
+        from_port = ingress.value["from_port"]
+        to_port = ingress.value["to_port"]
+        protocol = ingress.value["protocol"]
+        cidr_blocks = ingress.value["cidr_blocks"]
+      }
+    }
+}
+```
+`ingress_rules`을 dynamic block이 순회하면서 `ingress` sub block에 대한 데이터들을 입력해준다. 재밌는 것은 `ingress_rules` 변수의 각 item에 접근할 때 `dynamic` block의 이름으로 접근한다는 것인데, 여기서는 `ingress`으로 `ingress.value["from_port"]` 이렇게 접근하는 것을 볼 수 있다.
+
