@@ -859,3 +859,51 @@ terraform destroy -target=aws_vpc.apne2
 ```
 `aws_vpc` resource 중에서 `apne2`라는 이름을 가진 resource만 없앤다는 것이다. `aws_vpc.use1`은 삭제되지 않고 남는다.
 
+## Default tags
+tag는 resource에 tag를 두어 메타 데이터를 명시하는 것이다. resource들을 만들다보면 tag들이 동일한 경우들이 많았는데, 예전에는 다음과 같았다.
+
+```tf
+provider "aws" {
+    region = "ap-northeast-2"
+}
+
+locals {
+  tags = {
+    name = "rex11"
+  }
+}
+
+resource "aws_iam_user" "this" {
+  name = "rex"
+  tags = local.tags
+}
+
+resource "aws_vpc" "this" {
+  cidr_block = "10.0.0.0/24"
+  tags = local.tags
+}
+```
+`locals`에 `tags`라는 map을 만들어 설정한 다음에 `resource`에 tags마다 `local.tags`를 명시하는 것이다. 그러나 이는 리소스 수가 많아지면 매번 tags를 설정해야하는 문제가 있고, tags 설정을 누락할 때가 생길 수 밖에 없다.
+
+그래서 terraform에서는 default tag라는 것을 만들었다. 직접 명시하지 않고 `provider`부분에 `default_tags`를 써주면 모든 리소스에 해당 `default_tags` 정보가 입력된다.
+
+```tf
+provider "aws" {
+    region = "ap-northeast-2"
+    default_tags {
+      tags = {
+        Name = "rex"
+        Team = "Cloud" 
+      }
+    }
+}
+
+resource "aws_iam_user" "this" {
+  name = "rex"
+}
+
+resource "aws_vpc" "this" {
+  cidr_block = "10.0.0.0/24"
+}
+```
+aws provider에 `default_tags`로 기본 tag를 설정할 수 있다. 만약 `tags`를 `default_tags`가 아닌 다른 값으로 입력하고 싶다면, 직접 입력하면 된다.
