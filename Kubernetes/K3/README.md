@@ -82,11 +82,6 @@ k3d cluster create mycluster \
 
 포트포워딩으로 `loadbalancer`을 넣어주어야 host port와 우리가 만든 kubernetes cluster와 포트포워딩 로드밸런싱이 된다.
 
-```sh
-k3d cluster create main-cluster \
--p "9090:80@loadbalancer"
-```
-
 ## k3d node
 node 단위로의 제어도 가능하다.
 
@@ -156,4 +151,104 @@ k3d kubeconfig write {cluster_name}
 ```sh
 k3d kubeconfig merge {cluster_name}
 ``` 
-`--switch`을 사용하면 바로 해당 cluster로 바뀐다. 만약 `--switch`을 안쓰고 kubectl의 현재 cluster를 바꾸고 싶다면 `kubectl config use-context`를 사용하면 된다.
+`--switch`을 사용하면 바로 해당 cluster로 바뀐다. 만약 `--switch`을 안쓰고 kubectl의 현재 cluster를 바꾸고 싶다면 `kubectl config use-context`를 사용하면 된다.https://www.naver.com/#
+
+## test
+이제 제대로 동작하는 지 확인해보도록 하자.
+
+먼저 클러스터를 하나 만들어주자
+```sh
+k3d cluster create main-cluster \
+-p "9090:80@loadbalancer"
+```
+
+클러스터가 잘 동작하는 지 확인해보자
+```sh
+kubectl get po -A
+NAMESPACE     NAME                                      READY   STATUS      RESTARTS   AGE
+kube-system   coredns-ccb96694c-ctbbf                   1/1     Running     0          62m
+kube-system   helm-install-traefik-crd-925rh            0/1     Completed   0          62m
+kube-system   helm-install-traefik-fx9xg                0/1     Completed   1          62m
+kube-system   local-path-provisioner-5cf85fd84d-r4rt5   1/1     Running     0          62m
+kube-system   metrics-server-5985cbc9d7-c2zf2           1/1     Running     0          62m
+kube-system   svclb-traefik-4691725b-l875c              2/2     Running     0          62m
+kube-system   traefik-5d45fc8cc9-tprts                  1/1     Running     0          62m
+```
+
+다음으로 테스트 앱인 nginx pod를 올려보도록 하자.
+- nginx-deployment
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+```
+`kubectl apply -f nginx-deployment.yaml`을 실행한 다음에 배포가 되었는 지 확인해보도록 하자.
+
+```sh
+kubectl get po
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-7769f8f85b-8jhhb   1/1     Running   0          9s
+```
+잘 배포된 것을 볼 수 있다.
+
+다음으로 traefik에서 사용할 ingress를 하나 만들어주자, nginx pod는 `/` path에서 동작하도록 설정하자.
+
+- ingress.yaml
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx
+                port:
+                  number: 80
+```
+배포를 완료했다면 `http://localhost:9090/`에 접속해보도록 하자. 다음의 페이지가 나오면 성공이다.
+
+```sh
+Welcome to nginx!
+If you see this page, the nginx web server is successfully installed and working. Further configuration is required.
+
+For online documentation and support please refer to nginx.org.
+Commercial support is available at nginx.com.
+
+Thank you for using nginx.
+```
