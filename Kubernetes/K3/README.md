@@ -252,3 +252,24 @@ Commercial support is available at nginx.com.
 
 Thank you for using nginx.
 ```
+
+## 중지
+k3 cluster를 삭제할 것은 아니고, 컴퓨터를 끄려고 할 때 k3 cluster를 중지시키는 것이 좋다. k3d 특성 상 k3를 docker 기반으로 동작시키기 때문에 docker container를 일시정지 시키는 것이 바로 k3 cluster를 중지시키는 것이다. 물론 중지를 안시키고 서버를 종료한다고 해서 큰 일이 나는 것은 아니지만, 일시정지 시켰다가 다시 구동시키는 방법이 더 좋다.
+
+```sh
+k3d cluster stop main-cluster
+```
+
+`main-cluster`를 중지시켰다면, `k3d cluster list`으로 상태를 확인하면 된다.
+
+```sh
+k3d cluster list
+NAME           SERVERS   AGENTS   LOADBALANCER
+main-cluster   0/1       0/0      true
+```
+
+이제 컴퓨터를 끄거나 docker daemon을 끄면 된다. 나중에 다시 컴퓨터를 부팅해서  docker daemon을 켰다면 cluster를 시작시켜주면 된다. 
+
+```sh
+k3d cluster start main-cluster
+```
