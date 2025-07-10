@@ -1117,4 +1117,130 @@ output "subnet_id" {
 
 backend는 local, s3 뿐만 아니라 다양한 방식들이 있다. 해당 링크를 참조해서 각자의 상황에 맞게 만들어보도록 하자. https://developer.hashicorp.com/terraform/language/backend
 
-## 
+## 모듈
+모듈은 여러 리소스 블록을 모아 재사용하기 위한 기능이다. 함수와 비슷한 기능이라고 생각하면 된다. 변수를 통해 입력을 받기도하고 변수에 기본 값 설정도 가능하다. 모듈은 다양한 소스에서 가져올 수 있으며, 자체 제작하거나 잘 만들어진 모듈을 사용하는 것도 가능하다.
+
+모듈 제작은 매우 간단하다.
+1. 모듈로 사용할 폴더 생성
+2. 제공할 리소스 작성 및 입력 가능 변수 선언
+3. 사용자가 필요로 할만한 출력값 정의
+
+보통의 파일 구성은 다음과 같다.
+```sh
+security-baseline
+|-- main.tf
+|-- outputs.tf
+|-- variables.tf
+```
+
+module이라는 블럭을 통해 선언해주면 된다.
+
+```tf
+module "baseline" {
+  source = "../security-baseline"
+}
+
+output "ebs_encrypted" {
+  value = module.baseline.ebs_encrypted
+}
+```
+`source`로 어디에서 가져올 것인지 선언해주면 된다.
+
+먼저 모듈을 만들어보도록 하자. aws에서 기본적으로 해줘야하는 보안 설정이 있다. 
+
+- security-baseline/main.tf
+```tf
+resource "aws_ebs_encryption_by_default" "this" {
+    enabled = var.ebs_entrypted
+}
+
+resource "aws_ebs_snapshot_block_public_access" "this" {
+    state = var.aws_ebs_snapshot_block_public_access
+}
+
+resource "aws_iam_account_password_policy" "this" {
+    minimum_password_length = var.min_pass_len
+    require_lowercase_characters = true
+    require_numbers = true
+    require_uppercase_characters = true
+    require_symbols = true
+    allow_users_to_change_password = true
+}
+```
+다음은 ebs 데이터를 암호화하고 ebs snaphost 공개 접근을 막으며, aws iam 계정 생성 시 password policy를 새우는 보안 설정을 하는 부분이다.
+
+변수가 3개 사용되므로 `variables.tf`를 확인해보도록 하자.
+
+- security-baseline/variables.tf
+```tf
+variable "ebs_entrypted" {
+  type = bool
+  default = true
+}
+
+variable "aws_ebs_snapshot_block_public_access" {
+    type = string
+    default = "block-all-sharing"
+}
+
+variable "min_pass_len" {
+    type = number
+    default = 10
+}
+```
+
+위는 모듈의 입력받는 변수 부분이다. 그럼 결과를 내는 outputs.tf를 보도록 하자.
+
+- security-baseline/outputs.tf
+```tf
+output "ebs_entrypted" {
+  value = aws_ebs_encryption_by_default.this.enabled
+}
+```
+`aws_ebs_encryption_by_default` 결과를 `value`에 저장하는 것을 볼 수 있다. 
+
+이제 `security-baseline` module을 사용하는 `account-security`를 만들어보도록 하자.
+
+- account-security/base.tf
+```tf
+module "baseline" {
+    source = "../security-baseline"
+    // input variables
+    // ebs_entrypted = true
+}
+
+output "ebs_entrypted" {
+  value = module.baseline.ebs_entrypted
+}
+```
+`module`를 통해서 `source`를 설정해주면 해당 모듈을 손 쉽게 가져올 수 있다. 또한, 변수들인 `ebs_entrypted`, `aws_ebs_snapshot_block_public_access`, `min_pass_len` 또한 module에서 input으로 사용해줄 수 있다.
+
+output 또한 `module.baseline.ebs_entrypted`으로 가져올 수 있다.
+
+이렇게 로컬 module을 가져오는 방법도 있지만 외부의 소스를 가져오는 방법도 있다.
+
+- main.tf
+```tf
+# https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+
+  name = "my-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+  enable_nat_gateway = true
+  enable_vpn_gateway = true
+
+  tags = {
+    Terraform = "true"
+    Environment = "dev"
+  }
+}
+```
+다음은 aws vpc를 생성하는 과정에 대한 module을 `terraform-aws-modules/vpc/aws`에서부터 가져온 것이다. 자세한 사용 방법은 `https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest`을 참고하면 된다.
+
+terraform을 모듈화해서 사용할 수 있다는 정도만 알아두도록 하자.
