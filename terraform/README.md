@@ -907,3 +907,214 @@ resource "aws_vpc" "this" {
 }
 ```
 aws provider에 `default_tags`로 기본 tag를 설정할 수 있다. 만약 `tags`를 `default_tags`가 아닌 다른 값으로 입력하고 싶다면, 직접 입력하면 된다.
+
+## lifecycle
+https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle
+
+다양한 lifecycle meta-arguments들이 있지만 우리는 두 가지만 알아보도록 하자.
+
+VPC, EC2와 같은 resource가 배포가 되었있다고 하자. 그런데 사용자가 실수로 terraform으로 삭제할 수 있는데, 삭제하지 못하도록 `lifecycle`을 설정할 수 있다.
+
+- main.tf
+```tf
+resource "aws_vpc" "thus" {
+    cidr_block = "10.0.0.0/16"
+    tags = {
+      Name = "dynamic-block-vpc"
+    }
+
+    lifecycle {
+      prevent_destroy = true
+    }
+}
+```
+삭제 명령어를 실행하면 error가 발생하게 된다.
+
+```
+Error: Instance cannot be destroyed
+```
+이는 실수로 resource를 잘못 삭제하는 경우를 막기 위함이다. 삭제하고 싶다면 lifecycle 부분을 수정하는 수 밖에 없다. 중요한 resource는 반드시 lifecycle로 `prevent_destroy`를 걸어놓도록 하자.
+
+lifecycle의 또 다른 경우로는 특정 속성이 변해도 반영하지 않도록 하고 싶을 때가 있다. 
+
+```tf
+resource "aws_iam_user" "this" {
+  name = "rex123"
+  tags = {
+    Team = "cloud"
+  }
+}
+```
+다음은 `aws_iam_user` resource를 배포하는 코드인데, tag로 `Team=cloud`를 주었다. 그런데, 시간이 지나서 tag가 바뀌었다고 하자. 문제는 tag가 바뀌었다고 기존에 만들어 두었던 `rex123`에는 변동사항을 반영하고 싶지 않고 싶을 수 있다. 왜냐하면 tag같은 경우 바뀌면 좋지만 바뀐 것을 감지하고 리소스를 다시 올리기에는 그렇게 중요한 속성은 아니기 때문이다.
+
+또한, `rex123`의 tag 정보를 누군가가 console에서 수정했다고 하자. terraform의 경우 remote와도 sync를 맞추기 때문에 변화를 감지하고 changed 상태로 변동된다. 
+
+이 처럼 일부 속성에 대하여 변동 사항을 반영하고 싶지 않다면 다음과 같이 사용하면 된다.
+```tf
+resource "aws_iam_user" "this" {
+  name = "rex123"
+  tags = {
+    Team = "cloud"
+  }
+
+  lifecycle {
+    ignore_changes = [ tags ]
+  }
+}
+```
+`ignore_changes`안에 무시할 속성을 입력하면 `tags`값이 바뀌어도 `rex123`에 반영하지 않는다.
+
+이 밖에도 lifecycle은 다양한 기능들이 있어 필요할 때마다 찾아서 쓰면 된다. 가령 특정 값이 바뀌면 새롭게 교체하도록 하는 일도 있다.
+
+## Remote State
+테라폼에서 backend는 테라폼의 상태 파일을 관리하는 장소를 말한다.
+
+1. 상태(terraform.tfstate)는 내가 무엇을 배포했고, 관리할 지에 대한 타겟이기 때문에 생명과도 같다.
+2. 이러한 파일이 관리되는 위치를 backend라고 한다.
+3. 기본적으로 동일 폴더인 local에 만들어지지만 s3, GCS 등 원격에 저장이 가능하다.
+4. 이렇게 원격으로 저장함으로서 다음을 얻을 수 있다.
+  1. 우발적 삭제 방지
+  2. 버저닝을 통한 상태 변경 기록 자동 백업
+  3. 소스코드만 공유하더라도 협업 가능
+
+`terraform_remote_state`라는 data를 통해서 tfstate 파일을 가져올 수 있다. 아래는 s3에서 tfstate 파일을 가져오는 것이다.
+
+```tf
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket = "terraform-state-pod"
+    key    = "network/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+```
+
+테스트를 위해 s3 bucket을 만드는 terraform script부터 만들어보도록 하자.
+```tf
+resource "aws_s3_bucket" "this" {
+    bucket_prefix = "my-backend-s3-bucket"
+    force_destroy = true
+}
+
+resource "aws_s3_bucket_versioning" "this" {
+    bucket = aws_s3_bucket.this.id
+    versioning_configuration {
+      status = "Enabled"
+    }
+}
+
+output "bucket_name" {
+  value = aws_s3_bucket.this.bucket
+}
+```
+`aws_s3_bucket`으로 s3를 사용할 수 있다. 참고로 `force_destroy`을 `true`로 설정해주면 bucket 삭제 시에 bucket 안에 있는 데이터들도 모두 삭제된다.
+
+`aws_s3_bucket_versioning`을 설정해주면 버전에 따라 같은 키값이 해당 버전에 맞는 값을 갖게된다. 따라서, 버저닝을 통해 이전 값을 백업 할 수 있는 것이다.
+
+`terraform apply`로 실행시켜 결과를 보도록 하자. 
+
+제대로 실행되었다면 output으로 버킷 이름이 만들어졌을 것이다. 필자의 경우는 `my-backend-s3-bucket20250710144505068700000001`이 나왔다. 이 상태에서 backend를 사용해서 tfstate를 저장하도록 하자.
+
+- vpc/_backends.tf
+```tf
+terraform {
+  backend "s3" {
+    bucket = "my-backend-s3-bucket20250710144505068700000001"
+    key = "vpc/terraform.tfstate"
+    region = "ap-northeast-2"
+  }
+}
+```
+위와 같이 `_backends.tf`을 설정하면 `vpc/terraform.tfstate`을 사용하고, s3에 업로드까지 해주도록 한다.
+
+- vpc/main.tf
+```tf
+resource "aws_vpc" "this" {
+  cidr_block = "10.0.0.0/16"
+
+  tags = {
+    Name = "dynamic-block-vpc"
+  }
+}
+
+output "our_vpc" {
+    value = aws_vpc.this
+}
+```
+
+`terraform apply`로 배포해보도록 하자. 다음과 같은 에러가 발생할 수 있다.
+
+```sh
+│ Error: Backend configuration changed
+```
+
+이는 backend로 사용할 설정이 local에서 s3로 변경되었기 때문이다. 이때에는 `terraform init -migrate-state`으로 backend를 다른 곳으로 사용하겠다고 명시적으로 적어주면 된다.
+
+`terrform init`이 성공했다면 `terraform apply`를 실행해주도록 하자.
+
+실행시켜주면 우리가 만든 s3 bucket에 object가 생긴 것을 볼 수 있다. 해당 object를 보면 terrform.tfstate를 가지는 것을 볼 수 있다.
+
+다음으로 subnet을 하나 만들되 s3에 있는 vpc terraform.tfstate를 사용해보기로 하자. 이미 tfstate에 vpc관련 정보가 있기 때문에 subnet을 만들 때의 vpc id를 할당해줄 수 있다.
+
+- subnet/_backends.tf
+```tf
+terraform {
+  backend "s3" {
+    bucket = "my-backend-s3-bucket20250710144505068700000001"
+    key = "subnet/terraform.tfstate"
+    region = "ap-northeast-2"
+  }
+}
+```
+동일한 bucket이지만 key는 다른 것을 볼 수 있다. subnet이기 때문에 `subnet/terraform.tfstate`으로 subent의 terraform.tfstate를 저장할 것이다.
+
+다음으로 vpc에 대한 정보를 `vpc/terraform.tfstate`에서 가져오도록 하자.
+
+- _remotes.tf
+```tf
+data "terraform_remote_state" "vpc" {
+    backend = "s3"
+    config = {
+        bucket = "my-backend-s3-bucket20250710144505068700000001"
+        key = "vpc/terraform.tfstate"
+        region = "ap-northeast-2"
+    }
+}
+```
+`_remotes.tf`는 `vpc/terraform.tfstate`에 대한 정보를 `vpc`라는 data로 가져오는 것이다. 
+
+`vpc/terraform.tfstate` 정보를 가져왔지만 output을 뽑아 vpc id를 얻는 과정을 간편하게 하기 위해서 `_locals.tf`를 만들어 local 변수로 만들도록 하자. 이는 실무에서 많이 사용되는 패턴이다.
+
+- _locals.tf
+```tf
+locals {
+  vpc_id = data.terraform_remote_state.vpc.outputs.our_vpc.id
+}
+```
+우리가 만든 vpc의 정보가 `our_vpc`에 저장되어 있고, id값을 갸져와 `vpc_id`에 저장한 것이다.
+
+다음으로 `main.tf`를 만들어 subnet을 만들어보자.
+
+- main.tf
+```tf
+resource "aws_subnet" "this" {
+  vpc_id = local.vpc_id
+  cidr_block = "10.0.1.0/24"
+}
+
+output "subnet_id" {
+  value = aws_subnet.this.id
+}
+```
+이제 `terraform init`과 `terraform apply`로 배포해주도록 하자.
+
+배포 완료 후에 `subnet_id = "subnet-080419eb6ad098d6d"`이 만들어진 것을 볼 수 있다. 또한, s3에 `subnet/terraform.tfstate`가 만들어진 것도 볼 수 있다.
+
+이렇게 local이 아닌 원격으로 tfstate를 관리하여 관리의 편의성을 증대 시킬 수 있다.
+
+단, 삭제 순서를 지켜서 삭제하는 수 밖에 없는데, 이 과정이 좀 껄끄럽다. 우리의 경우는 subnet -> vpc -> s3 순서로 삭제해야한다. 또한, s3를 프로비저닝한 terraform의 경우는 tfstate 파일이 원격이 아니라 로컬에 남을 수 밖에 없다. 물론, 이 파일 마저도 다른 외부로 관리할 수도 있다.
+
+backend는 local, s3 뿐만 아니라 다양한 방식들이 있다. 해당 링크를 참조해서 각자의 상황에 맞게 만들어보도록 하자. https://developer.hashicorp.com/terraform/language/backend
+
+## 
