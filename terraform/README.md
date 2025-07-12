@@ -1244,3 +1244,5 @@ module "vpc" {
 다음은 aws vpc를 생성하는 과정에 대한 module을 `terraform-aws-modules/vpc/aws`에서부터 가져온 것이다. 자세한 사용 방법은 `https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest`을 참고하면 된다.
 
 terraform을 모듈화해서 사용할 수 있다는 정도만 알아두도록 하자.
+
+## Depends_on
