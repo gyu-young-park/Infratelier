@@ -1246,3 +1246,102 @@ module "vpc" {
 terraform을 모듈화해서 사용할 수 있다는 정도만 알아두도록 하자.
 
 ## Depends_on
+먼저 terraform으로 Public subnet을 만드는 예제를 보도록 하자.
+
+- main.tf
+```tf
+data "aws_availability_zone" "first" {
+  state = "available"
+}
+
+variable "vpc_cidr" {
+  default = "10.0.0.0/16"
+}
+
+locals {
+  az = data.aws_availability_zone.first.names[0]
+}
+
+resource "aws_vpc" "this" {
+  cidr_block = var.vpc_cidr
+}
+
+resource "aws_subnet" "public" {
+  vpc_id = aws_vpc.this.id
+  cidr_block = "10.0.220.0/24"
+  availability_zone = local.az
+}
+
+resource "aws_internet_gateway" "this" {
+  
+}
+
+resource "aws_internet_gateway_attachment" "this" {
+  internet_gateway_id = aws_internet_gateway.this.id
+  vpc_id = aws_vpc.this.id
+}
+
+resource "aws_nat_gateway" "this" {
+  subnet_id = aws_subnet.public.id
+  depends_on = [ aws_internet_gateway.this ]
+}
+```
+`aws_vpc`를 생성하는 부분이 있는데, `aws_vpc`를 생성하고 나서 `aws_subnet`에서 생성한 `aws_vpc.this`의 id값을 참조하는 것을 볼 수 있다.
+
+기본적으로 terraform은 resource 생성 시에 특정 resource를 참고한다면 내부적으로 순서를 지정하는데, `aws_vpc`의 id를 `aws_subnet`이 참조하고 있으니 `aws_vpc`가 먼저 생성되고 `aws_subnet`이 다음에 생성되는 것이다.
+
+다른 예제를 보면 `aws_internet_gateway`가 있는데, 아무것도 참조하고 있지 않는 것을 볼 수 있다. 이는 처음 생성에 vpc가 필요하지 않기 때문이다.
+
+`aws_internet_gateway_attachment`는 `aws_internet_gateway`를 참조하고 `aws_vpc_this.id`를 참조하고 있는데, 순서가 다음과 같이 생성된다.
+
+```sh
+aws_vpc --> aws_subnet
+aws_internet_gateway --> aws_internet_gateway_attachment
+```
+
+이 다음 `aws_nat_gateway`를 만드는 데, 문제는 `aws_nat_gateway`의 종속성은 `subnet_id`로만 되어있다는 것이다. 
+
+```tf
+resource "aws_nat_gateway" "this" {
+  subnet_id = aws_subnet.public.id
+  depends_on = [ aws_internet_gateway.this ]
+}
+```
+즉 이말은 `ws_nat_gateway`가 public subnet 생성은 기다리지만 internet gateway 생성은 기다리지 않는다는 것이다.
+
+해당 public subnet에 internet gateway가 없어도 nat gateway를 만들 수 있다는 것인데, 실제 NAT gateway를 사용하기 위해서는 public subnet에 internet gateway가 반드시 있어야만 한다.
+
+따라서 `depends_on`으로 명시적으로 기다리도록 하는 것이다.
+
+`terraform graph`를 사용하면 프로비저닝 순서를 볼 수 있다.
+
+```sh
+terraform graph
+digraph G {
+  rankdir = "RL";
+  node [shape = rect, fontname = "sans-serif"];
+  "data.aws_availability_zone.first" [label="data.aws_availability_zone.first"];
+  "aws_internet_gateway.this" [label="aws_internet_gateway.this"];
+  "aws_internet_gateway_attachment.this" [label="aws_internet_gateway_attachment.this"];
+  "aws_nat_gateway.this" [label="aws_nat_gateway.this"];
+  "aws_subnet.public" [label="aws_subnet.public"];
+  "aws_vpc.this" [label="aws_vpc.this"];
+  "aws_internet_gateway_attachment.this" -> "aws_internet_gateway.this";
+  "aws_internet_gateway_attachment.this" -> "aws_vpc.this";
+  "aws_nat_gateway.this" -> "aws_internet_gateway.this";
+  "aws_nat_gateway.this" -> "aws_subnet.public";
+  "aws_subnet.public" -> "data.aws_availability_zone.first";
+  "aws_subnet.public" -> "aws_vpc.this";
+}
+```
+이렇게 데이터로도 볼 수 있지만, 그림으로도 볼 수 있다. 자세한 예제는 https://developer.hashicorp.com/terraform/cli/commands/graph 를 참조하자.
+
+```sh
+terraform graph -type=plan | dot -Tpng >graph.png
+```
+
+`graph.png`로 그래프 그림이 나올 것이다.
+
+이외에 `depends_on`은 `aws_iam`과도 잘 사용되는데, 서버가 만들질 때 s3에 관한 권한이 있는 지 없는 지 `depends_on`으로 체크하는 것이다.
+
+## state 관리 명령어
