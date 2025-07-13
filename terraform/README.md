@@ -1345,3 +1345,82 @@ terraform graph -type=plan | dot -Tpng >graph.png
 이외에 `depends_on`은 `aws_iam`과도 잘 사용되는데, 서버가 만들질 때 s3에 관한 권한이 있는 지 없는 지 `depends_on`으로 체크하는 것이다.
 
 ## state 관리 명령어
+terraform의 local state에 remote state 정보를 가져오고 싶을 때가 있다. 가령, AWS console에서 IAM 유저를 만들었는데, 이를 가져와서 사용하고 싶은 경우가 있다.
+
+AWS console -> IAM -> 사용자 -> 사용자 생성 -> 'state-mgmt'로 생성
+
+이제 이 `state-mgmt`를 우리의 local terraform에서 `aws_iam_user` resource로 가져오도록 하자.
+
+- main.tf
+```tf
+resource "aws_iam_user" "this" {
+  name = "state-mgmt"
+}
+```
+
+terraform 명령어로 쉽게 가능하다. 
+
+```sh
+terraform import aws_iam_user.this state-mgmt
+```
+`terraform import` 명령어는 remote에 있는 `state-mgmt`를 가져와서, 현재 local에 있는 `aws_iam_user.this`에 state를 넣어준다.
+
+terraform state 파일을 보면 remote로부터 데이터를 잘 가져온 것을 볼 수 있다.
+
+`terraform state list` 명령어를 사용하면 terraform state로 무엇이 관리되고 있는 지 볼 수 있다.
+```sh
+terraform state list
+aws_iam_user.this
+```
+
+그런데 시간이 지나서 `this`라는 이름을 `state_mgmt`로 바꾸고 싶어졌다.
+
+- main.tf
+```tf
+resource "aws_iam_user" "this" {
+  name = "state-mgmt"
+}
+
+resource "aws_iam_user" "state_mgmt" {
+  name = "state-mgmt"
+}
+```
+이때 사용하는 명렁어가 바로 `terraform state mv`이다. state를 다른 state로 이동 시키는 것이다. 우리의 경우는 `aws_iam_user.this`의 state 정보를 `aws_iam_user.state_mgmt`로 이동시키고 싶다면 다음과 같이 쓰면 된다.
+
+```sh
+terraform state mv aws_iam_user.this aws_iam_user.state_mgmt
+```
+
+이 상태로 terraform state list를 보면 다음과 같다.
+```sh
+terraform state list
+aws_iam_user.state_mgmt
+```
+
+또한, `this`는 이제 없는 state이므로 `terraform plan`을 사용하면 생성하려는 계획이 보일 것이다. 따라서, 주석 처리해주도록 하자.
+
+```tf
+# resource "aws_iam_user" "this" {
+#   name = "state-mgmt"
+# }
+
+resource "aws_iam_user" "state_mgmt" {
+  name = "state-mgmt"
+}
+```
+
+다음으로 만약 더 이상 `aws_iam_user.state_mgmt` state를 local에서 처리하고 싶지 않다면, `terraform state rm` 명령어를 사용하면 된다.
+
+```sh
+terraform state rm aws_iam_user.state_mgmt
+```
+
+단, state에서 지웠다고해서 user가 사라지는 것은 아니다. 
+
+이 상태에서 `terraform plan`을 하면 해당 state가 없으니 다시 생성하려고 나올 것이다.
+
+참고로 state가 key기반인 경우는 다음과 같이 써주어야 한다.
+```sh
+terraform state rm 'aws_iam_user.this["rex2"]'
+```
+`''`을 써주는 것을 잊지 말도록 하자.
