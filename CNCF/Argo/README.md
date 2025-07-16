@@ -116,3 +116,78 @@ spec:
 ```sh
 default       guestbook-ui-6cb57c694d-lgwfw                      1/1     Running   0              40s
 ```
+
+## ArgoCD CLI 연결
+https://github.com/argoproj/argo-cd
+
+golang 가장 최신 버전이 설치되어있다면, 위의 github에 가서 직접 cli를 빌드하면 된다.
+
+```sh
+make cli-local
+```
+`./dist` 디렉터리에 cli가 만들어졌을 것이다. 만약 docker로 빌드하고 싶다면 `make cli`를 사용하면 된다.
+
+```bash
+./dist/argocd version
+
+argocd: v3.2.0+f4300e1
+  BuildDate: 2025-07-16T12:19:47Z
+  GitCommit: f4300e1afb1757a6a7f066cea26f8b19a937d937
+  GitTreeState: clean
+  GoVersion: go1.24.4
+  Compiler: gc
+  Platform: darwin/arm64
+argocd-server: v3.0.6+db93798
+  BuildDate: 2025-06-09T21:33:23Z
+  GitCommit: db93798d6643a565c056c6fda453e696719dbe12
+  GitTreeState: clean
+  GoVersion: go1.24.4
+  Compiler: gc
+  Platform: linux/arm64
+  Kustomize Version: v5.6.0 2025-01-14T15:12:17Z
+  Helm Version: v3.17.1+g980d8ac
+  Kubectl Version: v0.32.2
+  Jsonnet Version: v0.20.0
+```
+다음과 같이 나오면 성공이다.
+
+다음으로 우리의 kubernetes argocd server와 CLI를 연결해주도록 하자. 우리의 argocd server는 taefik에 따라 배포하였는데, 다음과 같다.
+
+1. treafik은 localhost 9090으로 노출되었다.
+2. https는 사용하고 있지 않는다.
+3. argocd server는 `localhost:9090/argocd` 로 연결되어 있다.
+
+```sh
+./argocd login localhost:9090 --plaintext --grpc-web --grpc-web-root-path /argocd
+```
+하나하나 설명하면 다음과 같다.
+
+1. localhost:9090 서버에 연결을 하겠다.
+2. --plaintext: https가 아니라 http로 통신하겠다.
+3. --grpc-web: ingress controller 상에서 grpc 통신에 문제가 발생 할 수 있다. 이를 http1.1 방식으로 grpc 요청을 만들어 처리하는 것이다.
+4. --grpc-web-root-path: 요청하려는 argocd 서버의 path이다.
+
+이렇게 요청하면 성공하게 된다.
+
+```bash
+./argocd login localhost:9090 --plaintext --grpc-web --grpc-web-root-path /argocd
+WARNING: server certificate had error: tls: failed to verify certificate: x509: certificate signed by unknown authority. Proceed insecurely (y/n)? y
+Username: admin
+Password: 
+'admin:login' logged in successfully
+Context 'localhost:9090/argocd' updated
+```
+
+연결에 제대로 성공했는 지 현재 argocd cli의 컨텍스트를 확인하도록 하자.
+```bash
+ ./argocd context
+CURRENT  NAME                   SERVER
+*        localhost:9090/argocd  localhost:9090
+
+
+./argocd app list
+NAME              CLUSTER                         NAMESPACE  PROJECT  STATUS  HEALTH   SYNCPOLICY  CONDITIONS  REPO                                             PATH       TARGET
+argocd/guestbook  https://kubernetes.default.svc  default    default  Synced  Healthy  Auto-Prune  <none>      https://github.com/argoproj/argocd-example-apps  guestbook  HEAD
+```
+이전에 배포했던 guestbook이 성공적으로 나오는 것을 확인 할 수 있다.
+
