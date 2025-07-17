@@ -191,3 +191,28 @@ argocd/guestbook  https://kubernetes.default.svc  default    default  Synced  He
 ```
 이전에 배포했던 guestbook이 성공적으로 나오는 것을 확인 할 수 있다.
 
+## Argocd project
+Argo proejct는 크게 총 4개로 구분 된다.
+
+1. Argocd
+2. Argo workflow
+3. Argo Event
+4. Argo Rollout
+
+Argocd를 먼저 알아 본 다음에 나머지들에 대해서 알아보도록 하자.
+
+ArgoCD는 helm, kustomize, jsonnet 등 선언적 정의 설정 파일을 통해서 배포를 자동화하도록 지원한다. ArgoCD를 구성하는 핵심 요소는 다음과 같다.
+
+![https://argo-cd.readthedocs.io/en/stable/assets/argocd_architecture.png](https://argo-cd.readthedocs.io/en/stable/assets/argocd_architecture.png)
+
+1. API 서버: 웹 UI, CLI, CI/CD 시스템에서 사용하는 API를 제공하는 gRPC/REST 서버이다. Application 상태를 관리하고 동기화, 롤백, 사용자 정의 작업을 호출해준다. 또한, 저장소 및 클러스터 자격 증명을 관리한다. 
+2. repo server: Application manifest를 보관하는 git 저장소의 local 캐시를 유지하는 내부 서비스이다. 저장소 URL, revision(commit, tag, branch), application path 등이 주어지면 입력 데이터를 기반으로 Kubernetes manifest를 만들고 반환해준다. Helm, Kustomize, Ksonnet 등 다양한 커스텀 플러그인과 같은 설정 관리 도구를 사용하여 매니페스트를 생성한다. 즉, git repo 복제 및 최신 상태 유지를 도와주고 원하는 설정을 부여하여 manifest를 만드는 것이다.
+3. Application controller: 가장 핵심이 되는 로직을 담당하여 실제 실행 중인 application을 지속적으로 모니터링하고 git repository에 지정된 desired state를 현제 클러스터에 반영해준다. 즉, repository 서버를 호출하여 최신 매니페스트를 가져오고 kubernets API 서버를 통해 클러스터 리소스에 변경 사항을 적용한다. 
+
+일련의 흐름은 다음과 같다.
+
+1. Client의 요청이 `argocd-server`에 전달된다. 이 요청은 CLI, UI 등을 통해서 전달되며 argocd에서 관리하는 `Application`을 생성, 수정, 동기화 등을 요청하는 것이다.
+2. `argocd-application-controller`는 `argocd-repo-server`를 통해서 등록된 `Application`의 git repository로부터 최신 manifest를 만들어달라고 요청한다. `argocd-repo-server`는 해당 repo를 clone하고 helm, kustomize를 사용하여 kubernetes manifest를 만들어내어 `argocd-application-controller`에게 그 결과를 반환한다.
+3. `argocd-application-controller`는 `argocd-server`로부터 받은 `Application` 요청의 상태를 맞추기 위해서 실제 cluster의 현제 상태와 desired state를 비교해 변경 사항을 반영한다. 
+4. `argocd-application-controller`가  `Application` 동기화 상태 및 관련 정보를 `argocd-server`에 보고하고, 그 결과가 사용자에게 표시되는 것이다.
+  
