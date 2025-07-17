@@ -215,4 +215,19 @@ ArgoCD는 helm, kustomize, jsonnet 등 선언적 정의 설정 파일을 통해�
 2. `argocd-application-controller`는 `argocd-repo-server`를 통해서 등록된 `Application`의 git repository로부터 최신 manifest를 만들어달라고 요청한다. `argocd-repo-server`는 해당 repo를 clone하고 helm, kustomize를 사용하여 kubernetes manifest를 만들어내어 `argocd-application-controller`에게 그 결과를 반환한다.
 3. `argocd-application-controller`는 `argocd-server`로부터 받은 `Application` 요청의 상태를 맞추기 위해서 실제 cluster의 현제 상태와 desired state를 비교해 변경 사항을 반영한다. 
 4. `argocd-application-controller`가  `Application` 동기화 상태 및 관련 정보를 `argocd-server`에 보고하고, 그 결과가 사용자에게 표시되는 것이다.
-  
+
+ArgoCD는 모든 리소스(Application, Project, Setting 등)을 Kubernetes manifest 형식으로 정의하고 관리한다. 이 manifest들은 일반적으로 ArgoCD가 설치된 동일한 네임스페이스(`argocd`)에 배포되어야 한다. Argocd에서 쓰이는 주요 CRD는 다음과 같다.
+
+1. `Application`: git repository를 통해서 cluster에 배포할 application의 설정을 담은 CRD이다. `source`를 통해 git의 어떤 repo를 사용할 지, `destination`을 통해서 어디 k8s cluster에 배포할 지 설정할 수 있다. 
+2. `AppProject`: `Application` CRD 여러 개를 묶어 하나의 논리적 그룹을 만들도록 한다. 이 그룹 안에서 `Application`은 설정의 지배를 받게 되는데, 가령 특정 git repo가 허락되지 않거나, 배포될 수 있는 k8s cluster 목록이 따로 주어질 수도 있다. 또한, cluster 내에서도 네임스페이스 범위나 허용/거부 목록을 지정하여 project 배포 권한을 세말히게 제어할 수 있다. 이는 각 팀이나 사용자 그룹에 고유한 `AppProject`를 할당하여 각자의 배포 환경과 정책을 격리하고 독립적으로 관리할 수 있도록 한다.
+
+git repository 세부 정보는 `Secrets`에 저장된다. 각 repository Secret은 `argocd.argoproj.io/secret-type: repository` label을 가져야 한다. 이 secret이 설정되었다면 원하는 repo의 인증 권한, ssh 설정, proxy, TLS 등이 가능하다. 
+
+kubernetes cluster의 자격 증명도 `Secret`에 저장되며 `argocd.argoproj.io/secret-type: cluster` label을 가져야 한다. 서버의 이름, api-server URL, namespace등을 설정할 수 있으며 `username`, `password` 등의 인증 정보도 설정할 수 있다.
+
+이렇게 ArgoCD는 모든 설정이 kubernetes manifest로 표현되기 때문에 ArgoCD 자신이 자신을 관리할 수도 있다. 이를 `app of apps` 패턴으로 하나의 ArgoCD(`Application`)이 다른 여러 ArgoCD(`Application`) 리소스를 관리하는 방식을 의미한다. 즉, 최상위 application이 하위 application을 배포하고 관리하는 계층 구조를 만드는 것이다.
+
+이 패턴은 ArgoCD가 kubernetes manifest를 git에서 읽어와 cluster에 배포하는 기본적인 작동 방식을 활용한다. `Application` 리소스 자체가 Kubernetes manifest이기 때문에 다른 `Application` 리소스를 배포하는 `Application`을 만드는 것이 가능해진다. 이렇게 `app of apps`을 사용하여 각 환경에 맞는 별도의 `Application` 정의를 git에 저장하고 각 환경별 App of Apps가 해당 환경에 맞는 하위 Application들을 배포하도록 할 수 있다. 가령 `prod-application`라는 App of Apps가 `prod-web-app`, `prod-api-server`, `prod-database` 등의 application을 관리하는 식이다.
+
+
+
