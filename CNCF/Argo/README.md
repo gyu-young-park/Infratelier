@@ -230,4 +230,3 @@ kubernetes cluster의 자격 증명도 `Secret`에 저장되며 `argocd.argoproj
 이 패턴은 ArgoCD가 kubernetes manifest를 git에서 읽어와 cluster에 배포하는 기본적인 작동 방식을 활용한다. `Application` 리소스 자체가 Kubernetes manifest이기 때문에 다른 `Application` 리소스를 배포하는 `Application`을 만드는 것이 가능해진다. 이렇게 `app of apps`을 사용하여 각 환경에 맞는 별도의 `Application` 정의를 git에 저장하고 각 환경별 App of Apps가 해당 환경에 맞는 하위 Application들을 배포하도록 할 수 있다. 가령 `prod-application`라는 App of Apps가 `prod-web-app`, `prod-api-server`, `prod-database` 등의 application을 관리하는 식이다.
 
 
-
