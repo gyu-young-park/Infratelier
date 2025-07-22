@@ -151,6 +151,12 @@ argocd-server: v3.0.6+db93798
 ```
 다음과 같이 나오면 성공이다.
 
+로그인하기 전에 먼저 초기 비밀번호를 확인하도록 하자.
+```sh
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+`x3kWtcQv7sICMOBx`이렇게 초기 비밀번호가 주어지면 `admin` user로 접근하면 된다.
+
 다음으로 우리의 kubernetes argocd server와 CLI를 연결해주도록 하자. 우리의 argocd server는 taefik에 따라 배포하였는데, 다음과 같다.
 
 1. treafik은 localhost 9090으로 노출되었다.
