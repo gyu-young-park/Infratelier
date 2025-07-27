@@ -164,7 +164,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 3. argocd server는 `localhost:9090/argocd` 로 연결되어 있다.
 
 ```sh
-./argocd login localhost:9090 --plaintext --grpc-web --grpc-web-root-path /argocd
+argocd login localhost:9090 --plaintext --grpc-web --grpc-web-root-path /argocd
 ```
 하나하나 설명하면 다음과 같다.
 
