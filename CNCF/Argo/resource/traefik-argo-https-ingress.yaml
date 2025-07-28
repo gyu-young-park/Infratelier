@@ -1,0 +1,29 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-server-route-localhost
+  namespace: argocd
+spec:
+  entryPoints:
+    - websecure # HTTPS 진입점
+    - web       # HTTP -> HTTPS 리다이렉션을 위한 진입점
+  routes:
+    - match: PathPrefix("/")
+      kind: Rule
+      services:
+        - name: argocd-server
+          port: 443 # Argo CD 서비스의 HTTPS 포트
+      middlewares:
+        - name: redirect-to-https@kubernetescrd # HTTP -> HTTPS 리다이렉션 미들웨어
+  tls:
+    secretName: argocd-local-tls # 위에서 생성한 TLS Secret 이름
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-https
+  namespace: argocd
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
