@@ -8,15 +8,18 @@ spec:
     - websecure # HTTPS 진입점
     - web       # HTTP -> HTTPS 리다이렉션을 위한 진입점
   routes:
-    - match: PathPrefix("/")
+    - match: PathPrefix(`/argocd`) # /argocd 경로에 매칭
       kind: Rule
       services:
         - name: argocd-server
           port: 443 # Argo CD 서비스의 HTTPS 포트
       middlewares:
         - name: redirect-to-https@kubernetescrd # HTTP -> HTTPS 리다이렉션 미들웨어
+        # 중요: Argo CD는 서브 경로에서 서비스될 때 PathPrefixStrip 미들웨어가 필요할 수 있습니다.
+        # 아래 주석 처리된 부분을 필요에 따라 추가하세요.
+        # - name: argocd-strip-prefix@kubernetescrd 
   tls:
-    secretName: argocd-local-tls # 위에서 생성한 TLS Secret 이름
+    secretName: argocd-tls # 위에서 생성한 TLS Secret 이름
 ---
 apiVersion: traefik.containo.us/v1alpha1
 kind: Middleware
@@ -27,3 +30,16 @@ spec:
   redirectScheme:
     scheme: https
     permanent: true
+---
+# PathPrefixStrip 미들웨어 (필요시 주석 해제하여 사용)
+# Argo CD가 /argocd 경로를 제거한 후 요청을 받도록 합니다.
+# apiVersion: traefik.containo.us/v1alpha1
+# kind: Middleware
+# metadata:
+#   name: argocd-strip-prefix
+#   namespace: argocd
+# spec:
+#   stripPrefix:
+#     prefixes:
+#       - /argocd
+#     forceSlash: false # /argocd/ 로 요청 시 / 로 변환
