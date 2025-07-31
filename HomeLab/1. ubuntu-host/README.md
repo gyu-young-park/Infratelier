@@ -339,9 +339,10 @@ nerdctl ps --namespace k8s.io
 ```'
 
 ## Golang 설치
-https://go.dev/doc/install
+https://go.dev/doc/install 에 들어가서 install 파일의 링크를 찾아서 `wget`으로 다운받도록 하자.
 
 ```sh
+wget https://go.dev/dl/go1.24.5.linux-amd64.tar.gz
 rm -rf /usr/local/go && tar -C /usr/local -xzf go1.24.5.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 go version
