@@ -336,4 +336,13 @@ nerdctl --version
 잘 설치되었다면 `k8s.io` namespace로 kubernetes 관련 pod의 container들을 보도록 하자.
 ```sh
 nerdctl ps --namespace k8s.io
+```'
+
+## Golang 설치
+https://go.dev/doc/install
+
+```sh
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.24.5.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+go version
 ```
