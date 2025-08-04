@@ -114,3 +114,46 @@ sudo apt install qemu-kvm libvirt-daemon-system virt-manager bridge-utils libvir
 4. `bridge-utils`: 가상 네트워크 브릿지를 설정하는 데 필요한 도구들을 모아놓은 패키지이다. 가상 머신이 외부 네트워크에 직접 접근하거나 호스트 컴퓨터와 통신하기 위해서는 네트워크 브릿지가 필요하다.
 5. `libvirt-clients`: `libvirt` 데몬을 제어하는 클라이언트 도구 모음으로 `virsh`이 가장 대표적이다. `virsh`은 CLI를 통해 `libvirt`를 제어할 수 있도록 해준다.
 
+이제 VM 생성에 필요한 이미지들을 설치해보도록 하자.
+```sh
+mkdir ./os_image && cd ./os_image
+wget https://dl.rockylinux.org/vault/centos/8-stream/isos/x86_64/CentOS-Stream-8-20240603.0-x86_64-dvd1.iso
+wget https://releases.ubuntu.com/focal/ubuntu-20.04.6-live-server-amd64.iso
+wget https://archive.org/download/rhel-8.8-x86_64-dvd/rhel-8.8-x86_64-dvd.iso
+```
+
+```sh
+sudo virt-install \
+    --name ansible-server \
+    --os-variant centos-stream8 \
+    --ram 4096 \
+    --vcpus 2 \
+    --disk path=/var/lib/libvirt/images/ansible-server.qcow2,size=50 \
+    --network network=default,model=virtio \
+    --location /경로/to/CentOS-Stream-8-x86_64-latest-dvd1.iso \
+    --noautoconsole
+```
+
+```sh
+sudo virt-install \
+    --name tnode1-ubuntu \
+    --os-variant ubuntu20.04 \
+    --ram 2048 \
+    --vcpus 2 \
+    --disk path=/var/lib/libvirt/images/tnode1-ubuntu.qcow2,size=30 \
+    --network network=default,model=virtio \
+    --location /경로/to/ubuntu-20.04.6-live-server-amd64.iso \
+    --noautoconsole
+```
+
+```sh
+sudo virt-install \
+    --name tnode2-rhel \
+    --os-variant rhel8.8 \
+    --ram 2048 \
+    --vcpus 2 \
+    --disk path=/var/lib/libvirt/images/tnode2-rhel.qcow2,size=30 \
+    --network network=default,model=virtio \
+    --location /경로/to/rhel-8.8-x86_64-dvd.iso \
+    --noautoconsole
+```
