@@ -77,14 +77,14 @@ VM을 만들어 ansible 실습 환경을 구축해보도록 하자.
 | Node Name | OS | CPU | Memory | Disk | NIC |
 |-----------|------|--------|------------|-----------|------------|
 | ansible-server | CentOS stream 8 | 2 | 4GB | 50GB | 192.168.100.4 |
-| tnode1-ubuntu | Ubuntu 20.04 | 2 | 2GB | 30GB | 192.168.100.6 |
+| tnode1-centos8 | CentOS stream 8 | 2 | 2GB | 30GB | 192.168.100.6 |
 | tnode2-rhel | RHEL 8.8 | 2 | 2GB | 30GB | 192.168.100.7 |
 
 `ansible-server`는 ansible을 설치되고 inventory와 playbook이 위치할 제어 노드로 `CentOS Stream8`로 구성한다. 
 
 ```sh
                                                +------------------------------+                                                              
-+------------------------------+               |         tnode1-ubuntu        |                                                              
++------------------------------+               |         tnode1-centos8       |                                                              
 |                              |               |         Managed Node1        |                                                              
 | Control Node(ansible server) |               |        (192.168.100.6)       |                                                              
 |        (192.168.100.4)       |-------------- +------------------------------+                                                              
@@ -96,7 +96,7 @@ VM을 만들어 ansible 실습 환경을 구축해보도록 하자.
 +------------------------------+               +------------------------------+ 
 ```
 
-ubuntu에서 KVM 및 virt-manager를 설치하도록 하자.
+KVM 및 virt-manager를 설치하도록 하자.
 
 먼저 가상화를 지원하는 CPU인지 확인하도록 하자. intel이면 `vmx`이고 AMD이면 `svm`으로 나온다.
 ```bash
@@ -118,7 +118,6 @@ sudo apt install qemu-kvm libvirt-daemon-system virt-manager bridge-utils libvir
 ```sh
 mkdir ./os_image && cd ./os_image
 wget https://dl.rockylinux.org/vault/centos/8-stream/isos/x86_64/CentOS-Stream-8-20240603.0-x86_64-dvd1.iso
-wget https://releases.ubuntu.com/focal/ubuntu-20.04.6-live-server-amd64.iso
 wget https://archive.org/download/rhel-8.8-x86_64-dvd/rhel-8.8-x86_64-dvd.iso
 ```
 
@@ -152,16 +151,68 @@ You can reconnect to the console to complete the installation process.
 sudo virsh console ansible-server
 ```
 
+1. disk 설정
+2. root password 설정
+3. host 설정
+
+완료한 뒤에는 `b` 버튼을 누르면 설치를 시작한다. 설치가 완료된 후에는 라이센스에 동의까지 해주어야 한다.
+
+완료된 후에 접속해보도록 하자.
+```sh
+sudo virsh start ansible-server
+```
+설정했던 host와 password를 입력하면 vm shell에 접속이 가능하다.
+```sh
+virsh console ansible-server
+```
+
+설치가 완료된 후에는 네트워크 설정을 해주도록 하자. `centos`는 `nmcli`를 사용하면 된다.
+```sh
+su -
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.4/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+nmcli con up enp1s0
+```
+
+확인해보면 다음과 같다.
+```sh
+ip -br addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp1s0           UP             192.168.100.4/24 fe80::5054:ff:fe5c:6179/64 
+virbr0           DOWN           192.168.122.1/24 
+```
+잘 설정된 것을 볼 수 있다. vm에서 빠져나오려면 `ctrl + ]`을 눌러야 한다.
+
+다음으로 `tnode1-centos8` VM을 프로비저닝해보도록 하자. 사실 ubuntu vm을 올리는 것이 실습에는 더 좋은데, ubuntu의 경우 console로만 설치할 시에 `--location`이 아니라 `--cdrom`을 사용하여 console 제어를 할 수가 없다. 따라서, 필자는 그냥 centos8로 대체하겠다. 정리하자면 이렇다.
+
+1. `--location`: 설치에 필요한 커널(`vmlinuz`)과 초기 램디스크(`initrd.img`) 파일을 직접 찾아서 호스트 시스템의 메모리에 로디한 후 VM을 부팅한다. VM은 부팅 후 지정된 위치에서 나머지 설치 파일을 가져온다.
+2. `--cdrom`: ISO 파일을 VM의 가상 CD-ROM 드라이브에 연결한다. VM은 이 가상 CD-ROM 드라이브를 통해 부팅하고 설치 프로그램이 시작된다. 
+
+보통 ubuntu는 `cdrom` 계열로 가상 CD-ROM으로 마운트하는 것이 가장 안정적이고 RHEL, CentOS, Rocky 같은 경우는 `--location`을 사용하여 ISO 이미지에서 직접 커널을 로드하는 방식이 더 일반적이다. 
+
 ```sh
 sudo virt-install \
-    --name tnode1-ubuntu \
-    --os-variant ubuntu20.04 \
+    --name tnode1-centos8 \
+    --os-variant centos-stream8 \
     --ram 2048 \
     --vcpus 2 \
-    --disk path=/var/lib/libvirt/images/tnode1-ubuntu.qcow2,size=30 \
+    --disk path=/var/lib/libvirt/images/tnode1-centos8.qcow2,size=30 \
     --network network=default,model=virtio \
-    --location /경로/to/ubuntu-20.04.6-live-server-amd64.iso \
+    --location /var/lib/libvirt/images/CentOS-Stream-8-20240603.0-x86_64-dvd1.iso \
+    --extra-args 'console=ttyS0,115200n8 serial' \
     --noautoconsole
+```
+`virsh console tnode1-centos8`로 접속하여 위에 설정했던 방법 그대로 해주면 된다.
+
+설치할 때는 `Installation Destination`를 먼저 설정하도록 한다. 그러면 대부분의 default 설정으로 다른 설정들도 같이 설정될 것이다.
+
+설치가 완료된 다음에는 접속 테스트 후에 network 설정을 해주도록 하자.
+```sh
+virsh start tnode1-centos8
+virsh console tnode1-centos8
+
+su -
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.6/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+nmcli con up enp1s0
 ```
 
 ```sh
@@ -172,6 +223,47 @@ sudo virt-install \
     --vcpus 2 \
     --disk path=/var/lib/libvirt/images/tnode2-rhel.qcow2,size=30 \
     --network network=default,model=virtio \
-    --location /경로/to/rhel-8.8-x86_64-dvd.iso \
+    --location /var/lib/libvirt/images/rhel-8.8-x86_64-dvd.iso \
+    --extra-args 'console=ttyS0,115200n8 serial' \
     --noautoconsole
 ```
+
+설치가 완료된 다음에는 접속 테스트 후에 network 설정을 해주도록 하자.
+```sh
+virsh start tnode2-rhel 
+virsh console tnode2-rhel
+
+su -
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.7/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+nmcli con up enp1s0
+```
+
+제대로 설정되었는 지 확인해보도록 하자.
+```sh
+ip -br addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp1s0           UP             192.168.100.7/24 fe80::5054:ff:fe9f:6681/64 
+```
+잘 설정된 것을 볼 수 있다.
+
+vm을 제거할 때는 다음의 명령어를 사용하면 된다.
+```sh
+sudo virsh destroy tnode1-centos8
+sudo virsh undefine tnode1-centos8
+sudo rm /var/lib/libvirt/images/tnode1-centos8.qcow2
+
+sudo virsh destroy tnode2-rhel # vm 종료
+sudo virsh undefine tnode2-rhel # vm 정의 삭제
+sudo rm /var/lib/libvirt/images/tnode2-rhel.qcow2 # vm 디스크 삭제
+```
+
+설치가 완료된 후에는 다음과 같이 나오면 정상이다.
+```sh
+virsh list --all
+ Id   Name             State
+--------------------------------
+ 5    ansible-server   running
+ 15   tnode2-rhel      running
+ 18   tnode1-centos8   running
+```
+
