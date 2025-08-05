@@ -130,8 +130,26 @@ sudo virt-install \
     --vcpus 2 \
     --disk path=/var/lib/libvirt/images/ansible-server.qcow2,size=50 \
     --network network=default,model=virtio \
-    --location /경로/to/CentOS-Stream-8-x86_64-latest-dvd1.iso \
+    --location /var/lib/libvirt/images/CentOS-Stream-8-20240603.0-x86_64-dvd1.iso \
+    --extra-args 'console=ttyS0,115200n8 serial' \
     --noautoconsole
+```
+위 명령어를 실행하면 아래와 같은 로그가 나온다.
+
+```sh
+Starting install...
+Retrieving 'vmlinuz'                                                                                                                                      |    0 B  00:00:00 ... 
+Retrieving 'initrd.img'                                                                                                                                   |    0 B  00:00:00 ... 
+Allocating 'ansible-server.qcow2'                                                                                                                         |    0 B  00:00:00 ... 
+Creating domain...                                                                                                                                        |    0 B  00:00:00     
+
+Domain is still running. Installation may be in progress.
+You can reconnect to the console to complete the installation process.
+```
+더 설정해주어 설치를 마무리 해주라는 것이다. console에 들어가서 설치 설정을 해주도록 하자.
+
+```sh
+sudo virsh console ansible-server
 ```
 
 ```sh
