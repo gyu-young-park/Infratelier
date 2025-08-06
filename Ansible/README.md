@@ -322,3 +322,201 @@ ansible [core 2.16.3]
   libyaml = True
 ```
 이렇게 나오면 성공이다.
+
+## 인벤토리 사용법
+어떤 시스템의 호스트를 자동화할 것인지 대상 호스트를 선정하는 것이 먼저이다. 대상 호스트 선정이 되면 인벤토리를 통해 대상 호스트를 설정할 수 있다. 인벤토리를 이용하여 자동화 대상 호스트를 설정하는 방법에 대해서 알아보도록 하자.
+
+인벤토리 파일은 텍스트 파일이며, 앤서블이 자동화 대상으로 하는 관리 호스트를 지정한다. 이 파일은 `INI` 스타일 형식(이름=값) 또는 YAML을 포함한 다양한 형식을 사용할 수 있다.
+
+가장 간단한 형식인 `INI` 스타일 인벤토리는 다음과 같이 호스트명 또는 IP 주소를 한 줄 씩 나열하는 목록 형태이다.
+```sh
+web1.example.com
+db1.example.com
+192.0.2.42
+```
+
+우리의 대상 타겟들에 대한 IP를 적어주도록 하자.
+```
+cd /home/ansible-server
+mkdir ./my-ansible && cd ./my-ansible
+echo 192.168.100.6 > ./inventory
+echo 192.168.100.7 >> ./inventory
+```
+
+`cat ./inventory `으로 확인하면 다음과 같다.
+```sh
+192.168.100.6
+192.168.100.7
+```
+
+이렇게하면 inventory가 완성이다.
+
+만약 이렇게 IP 주소가 아니라 host 이름으로 하고 싶다면 `/etc/hosts`에 다음의 데이터를 추가한다음에 inventory를 수정하면 된다.
+```sh
+vi /etc/hosts
+
+192.168.100.6   tnode2-centos8.exp.com
+192.168.100.7   tnode3-rhel.exp.com
+```
+
+설정이 완료되었다면 이제 inventory를 host 이름으로 수정하도록 하자.
+```sh
+vi ./inventory
+
+tnode2-centos8.exp.com
+tnode3-rhel.exp.com
+```
+
+### 그룹별 호스트 설정
+그룹별로 호스트를 설정하여 사용하면 앤서블 플레이북 실행 시 그룹별로 작업을 처리할 수 있어 좀 더 효과적이다. 이 경우 다음과 같이 `[]`으로 그룹명을 작성하여 해당 그룹에 속하는 호스트명이나 IP를 한줄에 하나씩 나열한다. 참고로 host들은 서로 다른 그룹에 속할 수 있다. 즉, 하나의 host가 하나의 그룹에 속한다고 해서 다른 그룹에 속하지 못하는 것은 아니다. 
+
+```
+[webservers]
+web1.example.com
+web2.example.com
+192.0.2.42
+
+[db-servers]
+db01.example.com
+db02.example.com
+
+[east-datacenter]
+web1.example.com
+db01.example.com
+```
+
+### 중첩 그룹 정의
+앤서블 인벤토리는 호스트 그룹에 기존에 정의한 로스트 그룹을 포함할 수도 있다. 이 경우 호스트 그룹 이름 생성시 `:children` 접미사를 추가하면 된다. 다음은 `[datacenter:children]` 그룹이 `[webservers]`, `[db-servers]` 그룹을 포함하고 있다는 것을 보여준다. 
+
+```sh
+[webservers]
+web1.example.com
+web2.example.com
+192.0.2.42
+
+[db-servers]
+db01.example.com
+db02.example.com
+
+[datacenter:children]
+webservers
+dbservers
+```
+
+### 범위를 사용한 호스트 사양 간소화
+호스트 또는 IP 주소를 지정할 때 범위를 지정할 수 있다. 가령 `192.168.100.0`에서 `192.168.100.255`까지 모두 포함하고 싶은 경우가 있을 수 있다. 이 같은 경우 `192.168.100.[0:255]`과 같이 간단하게 쓸 수 있다. 정리하면 다음과 같다.
+```
+[start:end]
+```
+
+아래의 예제를 보도록 하자.
+```sh
+[webservers]
+web[1:2].example.com
+
+[db-servers]
+db[01:02].example.com
+
+[defaults]
+192.168.4.[0:255]
+```
+1. `web1.example.com`, `web2.example.com` 두 개가 나온다.
+2. `db01.example.com`, `db02.example.com` 두 개가 나온다.
+3. `192.168.4.0`에서 `192.168.4.255`까지 표현된다.
+
+숫자 범위 뿐만 아니라 문자도 가능하다. 가령 abc까지라면
+```sh
+[dns]
+[a:c].dns.example.com
+```
+1. `a.dns.example.com`, `b.dns.example.com`, `c.dns.example.com` 이렇게 3개가 나온다.
+
+더 자세한 예제들은 `/etc/ansible/hosts`에 들어가면 설명한 인벤토리 사용 예들을 자세히 볼 수 있다.
+
+### 인벤토리 확인
+인벤토리를 지정하여 해당 인벤토리의 구조가 어떻게되어 있는 지 한 눈에 확인할 수 있는 명령어도 있다. `ansible-inventory` 라는 명령어를 사용하면 된다.
+
+```sh
+ansible-inventory -i ./inventory --graph
+@all:
+  |--@ungrouped:
+  |  |--tnode2-centos8.exp.com
+  |  |--tnode3-rhel.exp.com
+```
+`-i` 옵션으로 inventory 파일을 지정한다. `--graph`로 그래프 형식의 모습을 볼 수 있다. `--list`로 바꾸면 json 형식으로 볼 수 있다.
+
+우리의 인벤토리를 다음과 같이 바꿔보도록 하자.
+```sh
+vi ./inventory
+
+[web]
+tnode2-centos8.exp.com
+
+[db]
+tnode3-rhel.exp.com
+
+[all:children]
+web
+db
+```
+이 다음 `ansible-inventory -i ./inventory --list`로 확인하면 다음과 같다.
+
+```json
+{
+    "_meta": {
+        "hostvars": {}
+    },
+    "all": {
+        "children": [
+            "ungrouped",
+            "web",
+            "db"
+        ]
+    },
+    "db": {
+        "hosts": [
+            "tnode3-rhel.exp.com"
+        ]
+    },
+    "web": {
+        "hosts": [
+            "tnode2-centos8.exp.com"
+        ]
+    }
+}
+```
+
+`-i` 옵션을 쓰지 않고 현재 프로젝트의 ansible의 적용되고 있는 inventory의 구성을 확인하기 위해서는 `-i`옵션을 빼고 `inventory` 파일을 쓰지 않으면 된다. 단, 먼저 `ansible.cfg`에 어떤 inventory를 사용할 지 지정되어 있어야 한다. 이제 현재 디렉터리 내에 `ansible.cfg`라는 앤서블 환경 설정 파일을 다음과 같이 구성하도록 하자.
+
+```sh
+vi ./ansible.cfg
+
+[defaults]
+inventory = ./inventory
+```
+
+`ansible-inventory --list` 명령어를 사용 현재 프로젝트에 적용 중인 inventory 구성이 나온다.
+```sh
+{
+    "_meta": {
+        "hostvars": {}
+    },
+    "all": {
+        "children": [
+            "ungrouped",
+            "web",
+            "db"
+        ]
+    },
+    "db": {
+        "hosts": [
+            "tnode3-rhel.exp.com"
+        ]
+    },
+    "web": {
+        "hosts": [
+            "tnode2-centos8.exp.com"
+        ]
+    }
+}
+```
