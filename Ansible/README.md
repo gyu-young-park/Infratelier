@@ -166,19 +166,23 @@ sudo virsh start ansible-server
 virsh console ansible-server
 ```
 
-설치가 완료된 후에는 네트워크 설정을 해주도록 하자. `centos`는 `nmcli`를 사용하면 된다.
+설치가 완료된 후에는 네트워크 설정을 해주도록 하자. `centos`는 `nmcli`를 사용하면 된다. 참고로 vm을 provisioning하고 있는 host에서의 vm bridge가 `virbr0           UP             192.168.122.1/24 `이기 때문에 `192.168.122.1/24` IP 대역을 vm이 외부와 트래픽을 통신하는 IP로 두도록 하였다.
 ```sh
 su -
-nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.4/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.122.4/24 ipv4.gateway 192.168.122.1 ipv4.dns 192.168.122.1
+nmcli con modify enp1s0 +ipv4.addresses 192.168.100.4/24
 nmcli con up enp1s0
 ```
+1. 192.168.122.1/24: vm <-tab-> virtual bridge <-> host <-> internet 연결 IP
+2. 192.168.100.1/24: vm 끼리의 통신 IP
 
 확인해보면 다음과 같다.
 ```sh
 ip -br addr
 lo               UNKNOWN        127.0.0.1/8 ::1/128 
-enp1s0           UP             192.168.100.4/24 fe80::5054:ff:fe5c:6179/64 
-virbr0           DOWN           192.168.122.1/24 
+enp1s0           UP             192.168.122.4/24 192.168.100.4/24 fe80::5054:ff:feef:463f/64 
+virbr0           DOWN           192.168.122.1/24
 ```
 잘 설정된 것을 볼 수 있다. vm에서 빠져나오려면 `ctrl + ]`을 눌러야 한다.
 
@@ -211,7 +215,9 @@ virsh start tnode1-centos8
 virsh console tnode1-centos8
 
 su -
-nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.6/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.122.6/24 ipv4.gateway 192.168.122.1 ipv4.dns 192.168.122.1
+nmcli con modify enp1s0 +ipv4.addresses 192.168.100.6/24
 nmcli con up enp1s0
 ```
 
@@ -234,7 +240,9 @@ virsh start tnode2-rhel
 virsh console tnode2-rhel
 
 su -
-nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.100.7/24 ipv4.gateway 192.168.100.1 ipv4.dns 192.168.100.1
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+nmcli con modify enp1s0 ipv4.method manual ipv4.addresses 192.168.122.7/24 ipv4.gateway 192.168.122.1 ipv4.dns 192.168.122.1
+nmcli con modify enp1s0 +ipv4.addresses 192.168.100.7/24
 nmcli con up enp1s0
 ```
 
@@ -242,12 +250,17 @@ nmcli con up enp1s0
 ```sh
 ip -br addr
 lo               UNKNOWN        127.0.0.1/8 ::1/128 
-enp1s0           UP             192.168.100.7/24 fe80::5054:ff:fe9f:6681/64 
+enp1s0           UP             192.168.122.7/24 192.168.100.7/24 fe80::5054:ff:fe81:e778/64 
+virbr0           DOWN           192.168.122.1/24 
 ```
 잘 설정된 것을 볼 수 있다.
 
-vm을 제거할 때는 다음의 명령어를 사용하면 된다.
+나중에 vm을 제거할 때는 다음의 명령어를 사용하면 된다. 
 ```sh
+sudo virsh destroy ansible-server
+sudo virsh undefine ansible-server
+sudo rm /var/lib/libvirt/images/ansible-server.qcow2
+
 sudo virsh destroy tnode1-centos8
 sudo virsh undefine tnode1-centos8
 sudo rm /var/lib/libvirt/images/tnode1-centos8.qcow2
@@ -267,3 +280,45 @@ virsh list --all
  18   tnode1-centos8   running
 ```
 
+이제 ansible을 설치하도록 하자. centos 환경으로 가서 `epel-release` 명령어로 CentOS 패키지 repo를 먼저 설치해야한다.
+```sh
+virsh console ansible-server
+yum install epel-release
+yum install ansible
+```
+
+만약 설치 과정에서 다음의 에러를 만날 수 있다. 이는 centos8의 `mirrorlist.centos.org`가 운영을 종료했기 때문에 발생한 문제이다.
+```sh
+yum install epel-release
+
+CentOS Stream 8 - AppStream                     0.0  B/s |   0  B     00:00    
+
+Errors during downloading metadata for repository 'appstream':
+
+  - Curl error (6): Couldn't resolve host name for http://mirrorlist.centos.org/?release=8-stream&arch=x86_64&repo=AppStream&infra=stock [Could not resolve host: mirrorlist.centos.org]
+
+Error: Failed to download metadata for repo 'appstream': Cannot prepare internal mirrorlist: Curl error (6): Couldn't resolve host name for http://mirrorlist.centos.org/?release=8-stream&arch=x86_64&repo=AppStream&infra=stock [Could not resolve host: mirrorlist.centos.org]
+```
+
+그래서 아래와 같이 mirror 서버를 `vault.centos.org`로 바꾸도록 하자.
+```sh
+cd /etc/yum.repos.d/
+sudo sed -i 's/mirrorlist/#mirrorlist/g' CentOS-Stream-*.repo
+sudo sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' CentOS-Stream-*.repo
+```
+이제 다시 위에 있는 설치 명령어를 실행하면 성공할 것이다.
+
+설치가 완료되었다면 이제 버전을 확인해보도록 하자.
+```sh
+ansible --version
+ansible [core 2.16.3]
+  config file = /etc/ansible/ansible.cfg
+  configured module search path = ['/root/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /usr/lib/python3.12/site-packages/ansible
+  ansible collection location = /root/.ansible/collections:/usr/share/ansible/collections
+  executable location = /usr/bin/ansible
+  python version = 3.12.1 (main, Feb 21 2024, 14:18:26) [GCC 8.5.0 20210514 (Red Hat 8.5.0-21)] (/usr/bin/python3.12)
+  jinja version = 3.1.2
+  libyaml = True
+```
+이렇게 나오면 성공이다.
