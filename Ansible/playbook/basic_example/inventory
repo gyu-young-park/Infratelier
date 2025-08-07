@@ -1,0 +1,9 @@
+[web]
+tnode1-centos8.exp.com
+
+[db]
+tnode2-rhel.exp.com
+
+[all:children]
+web
+db
