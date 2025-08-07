@@ -323,6 +323,71 @@ ansible [core 2.16.3]
 ```
 이렇게 나오면 성공이다.
 
+## VM 재시작 시에도 nmcli 설정
+왜인지는 모르겠는데 자꾸 호스트를 재시작하면 VM의 network 설정이 초기화된다. 아예 systemd에 설정해서 초기에 설정되도록 하자.
+
+ansible-server의 설정은 다음과 같다.
+
+- /usr/local/bin/setup-network.sh
+```sh
+#!/bin/bash
+
+# resolv.conf에 DNS 추가
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+# 기본 IP, 게이트웨이, DNS 설정
+nmcli con modify enp1s0 ipv4.method manual \
+    ipv4.addresses 192.168.122.4/24 \
+    ipv4.gateway 192.168.122.1 \
+    ipv4.dns 192.168.122.1
+
+# 추가 IP 주소 설정 (Secondary IP)
+nmcli con modify enp1s0 +ipv4.addresses 192.168.100.4/24
+
+# 연결 활성화
+nmcli con up enp1s0
+```
+
+다음으로 권한을 바꿔주도록 하자.
+```sh
+sudo chmod +x /usr/local/bin/setup-network.sh
+sudo chown root:root /usr/local/bin/setup-network.sh
+```
+
+이제 systemd 서비스 파일을 생성해주도록 하자.
+
+- /etc/systemd/system/setup-network.service
+```sh
+[Unit]
+Description=Custom network setup on boot
+After=NetworkManager.service
+Requires=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-network.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+바로 적용시켜보도록 하자.
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable setup-network.service
+sudo systemctl start setup-network.service   # 즉시 적용
+```
+
+ip가 잘 붙었는 지 확인해보도록 하자.
+```sh
+ip -br addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp1s0           UP             192.168.122.4/24 192.168.100.4/24 fe80::5054:ff:feef:463f/64 
+virbr0           DOWN           192.168.122.1/24 
+```
+성공한 것을 볼 수 있다. 이제 나머지 tnode1-centos8과 tnode2-rhel에도 해주면 된다.
+
 ## 인벤토리 사용법
 어떤 시스템의 호스트를 자동화할 것인지 대상 호스트를 선정하는 것이 먼저이다. 대상 호스트 선정이 되면 인벤토리를 통해 대상 호스트를 설정할 수 있다. 인벤토리를 이용하여 자동화 대상 호스트를 설정하는 방법에 대해서 알아보도록 하자.
 
@@ -355,16 +420,16 @@ echo 192.168.100.7 >> ./inventory
 ```sh
 vi /etc/hosts
 
-192.168.100.6   tnode2-centos8.exp.com
-192.168.100.7   tnode3-rhel.exp.com
+192.168.100.6   tnode1-centos8.exp.com
+192.168.100.7   tnode2-rhel.exp.com
 ```
 
 설정이 완료되었다면 이제 inventory를 host 이름으로 수정하도록 하자.
 ```sh
 vi ./inventory
 
-tnode2-centos8.exp.com
-tnode3-rhel.exp.com
+tnode1-centos8.exp.com
+tnode2-rhel.exp.com
 ```
 
 ### 그룹별 호스트 설정
@@ -450,10 +515,10 @@ ansible-inventory -i ./inventory --graph
 vi ./inventory
 
 [web]
-tnode2-centos8.exp.com
+tnode1-centos8.exp.com
 
 [db]
-tnode3-rhel.exp.com
+tnode2-rhel.exp.com
 
 [all:children]
 web
@@ -475,12 +540,12 @@ db
     },
     "db": {
         "hosts": [
-            "tnode3-rhel.exp.com"
+            "tnode2-rhel.exp.com"
         ]
     },
     "web": {
         "hosts": [
-            "tnode2-centos8.exp.com"
+            "tnode1-centos8.exp.com"
         ]
     }
 }
@@ -510,12 +575,12 @@ inventory = ./inventory
     },
     "db": {
         "hosts": [
-            "tnode3-rhel.exp.com"
+            "tnode2-rhel.exp.com"
         ]
     },
     "web": {
         "hosts": [
-            "tnode2-centos8.exp.com"
+            "tnode1-centos8.exp.com"
         ]
     }
 }
